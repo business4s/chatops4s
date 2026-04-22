@@ -331,7 +331,7 @@ object FieldCodec {
 trait FormDef[T] {
   def fields: List[FormFieldDef]
   def parse(values: Map[String, Map[String, ViewStateValue]]): Either[String, T]
-  private[slack] def buildBlocks(initialValues: Map[String, Any]): List[Block]
+  def buildBlocks(initialValues: Map[String, Any]): List[Block]
 }
 
 object FormDef {
@@ -357,7 +357,7 @@ object FormDef {
         }
       }
 
-      private[slack] def buildBlocks(initialValues: Map[String, Any]): List[Block] =
+      def buildBlocks(initialValues: Map[String, Any]): List[Block] =
         fieldsAndCodecs.map { case (fieldDef, _, buildElementFn) =>
           val iv      = initialValues.get(fieldDef.id)
           val element = buildElementFn(fieldDef.id, iv)
