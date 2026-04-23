@@ -29,7 +29,7 @@ lazy val `chatops4s-slack` = (project in file("chatops4s-slack"))
     libraryDependencies ++= Seq(
       "org.slf4j"                      % "slf4j-api"   % "2.0.17",
       "org.typelevel"                 %% "cats-effect" % "3.6.3"  % Test,
-      "com.softwaremill.sttp.client4" %% "cats"        % "4.0.19" % Test,
+      "com.softwaremill.sttp.client4" %% "cats"        % "4.0.23" % Test,
     ),
     Test / parallelExecution := false,
   )
