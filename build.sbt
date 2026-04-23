@@ -69,7 +69,7 @@ lazy val commonSettings = Seq(
     ScalacOptions.warnNonUnitStatement,
   ),
   libraryDependencies ++= Seq(
-    "org.scalatest" %% "scalatest"                     % "3.2.19" % Test,
+    "org.scalatest" %% "scalatest"                     % "3.2.20" % Test,
     "org.typelevel" %% "cats-effect-testing-scalatest" % "1.7.0"  % Test,
   ),
   organization  := "org.business4s",
