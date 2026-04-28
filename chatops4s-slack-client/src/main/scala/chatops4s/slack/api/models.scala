@@ -183,7 +183,7 @@ sealed trait SlackResponse[+T] {
 }
 
 object SlackResponse {
-  case class Ok[+T](value: T) extends SlackResponse[T] {
+  case class Ok[+T](value: T)                                     extends SlackResponse[T]       {
     def okOrThrow: T = value
   }
   case class Err(error: String, details: List[String], raw: Json) extends SlackResponse[Nothing] {
@@ -197,7 +197,10 @@ object SlackResponse {
         cursor.getOrElse[String]("error")("unknown_error").map { error =>
           // Slack typically returns the same content under response_metadata.messages (with [ERROR]/[WARN]
           // prefixes) and the top-level `errors` array. Prefer messages; fall back to errors if absent.
-          val details = cursor.downField("response_metadata").downField("messages").as[List[String]]
+          val details = cursor
+            .downField("response_metadata")
+            .downField("messages")
+            .as[List[String]]
             .orElse(cursor.downField("errors").as[List[String]])
             .getOrElse(Nil)
           Err(error, details, cursor.value)

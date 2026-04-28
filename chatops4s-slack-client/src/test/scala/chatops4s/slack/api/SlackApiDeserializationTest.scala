@@ -22,18 +22,18 @@ class SlackApiDeserializationTest extends AnyFreeSpec with Matchers {
     assume(json.isDefined, s"Fixture $name not found — run ResponseCollector first")
     val result = decode[SlackResponse[T]](json.get)
     result match {
-      case Right(SlackResponse.Ok(value))      => checks(value)
-      case Right(err: SlackResponse.Err)       => fail(s"Expected Ok but got $err")
-      case Left(err)                           => fail(s"Failed to decode: $err")
+      case Right(SlackResponse.Ok(value)) => checks(value)
+      case Right(err: SlackResponse.Err)  => fail(s"Expected Ok but got $err")
+      case Left(err)                      => fail(s"Failed to decode: $err")
     }
   }
 
   private def parseOkInline[T: Decoder](json: String)(checks: T => Unit): Unit = {
     val result = decode[SlackResponse[T]](json)
     result match {
-      case Right(SlackResponse.Ok(value))      => checks(value)
-      case Right(err: SlackResponse.Err)       => fail(s"Expected Ok but got $err")
-      case Left(err)                           => fail(s"Failed to decode: $err")
+      case Right(SlackResponse.Ok(value)) => checks(value)
+      case Right(err: SlackResponse.Err)  => fail(s"Expected Ok but got $err")
+      case Left(err)                      => fail(s"Failed to decode: $err")
     }
   }
 
