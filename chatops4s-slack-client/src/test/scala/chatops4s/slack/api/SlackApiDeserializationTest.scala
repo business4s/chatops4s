@@ -22,18 +22,18 @@ class SlackApiDeserializationTest extends AnyFreeSpec with Matchers {
     assume(json.isDefined, s"Fixture $name not found — run ResponseCollector first")
     val result = decode[SlackResponse[T]](json.get)
     result match {
-      case Right(SlackResponse.Ok(value)) => checks(value)
-      case Right(SlackResponse.Err(err))  => fail(s"Expected Ok but got Err($err)")
-      case Left(err)                      => fail(s"Failed to decode: $err")
+      case Right(SlackResponse.Ok(value))      => checks(value)
+      case Right(err: SlackResponse.Err)       => fail(s"Expected Ok but got $err")
+      case Left(err)                           => fail(s"Failed to decode: $err")
     }
   }
 
   private def parseOkInline[T: Decoder](json: String)(checks: T => Unit): Unit = {
     val result = decode[SlackResponse[T]](json)
     result match {
-      case Right(SlackResponse.Ok(value)) => checks(value)
-      case Right(SlackResponse.Err(err))  => fail(s"Expected Ok but got Err($err)")
-      case Left(err)                      => fail(s"Failed to decode: $err")
+      case Right(SlackResponse.Ok(value))      => checks(value)
+      case Right(err: SlackResponse.Err)       => fail(s"Expected Ok but got $err")
+      case Left(err)                           => fail(s"Failed to decode: $err")
     }
   }
 
@@ -92,11 +92,11 @@ class SlackApiDeserializationTest extends AnyFreeSpec with Matchers {
       assume(json.isDefined, "Fixture error.json not found — run ResponseCollector first")
       val result = decode[SlackResponse[chat.DeleteResponse]](json.get)
       result match {
-        case Right(SlackResponse.Err(error)) =>
+        case Right(SlackResponse.Err(error, _, _)) =>
           error should not be empty
-        case Right(SlackResponse.Ok(_))      =>
+        case Right(SlackResponse.Ok(_))            =>
           fail("Expected Err but got Ok")
-        case Left(err)                       =>
+        case Left(err)                             =>
           fail(s"Failed to decode: $err")
       }
     }
@@ -118,6 +118,42 @@ class SlackApiDeserializationTest extends AnyFreeSpec with Matchers {
         response.okOrThrow
       }
       ex.error should not be empty
+    }
+
+    "invalid_blocks error prefers response_metadata.messages over errors" in {
+      val json     =
+        """{
+          |  "ok": false,
+          |  "error": "invalid_blocks",
+          |  "errors": ["must define either `text` or `fields` [json-pointer:/blocks/0/type]"],
+          |  "response_metadata": {
+          |    "messages": ["[ERROR] must define either `text` or `fields` [json-pointer:/blocks/0/type]"]
+          |  }
+          |}""".stripMargin
+      val response = decode[SlackResponse[chat.PostMessageResponse]](json).toOption.get
+      val ex       = intercept[SlackApiError] {
+        response.okOrThrow
+      }
+      ex.error shouldBe "invalid_blocks"
+      ex.details shouldBe List("[ERROR] must define either `text` or `fields` [json-pointer:/blocks/0/type]")
+      ex.response shouldBe defined
+      ex.getMessage should include("invalid_blocks")
+      ex.getMessage should include("[json-pointer:/blocks/0/type]")
+      ex.getMessage should include("Full response:")
+    }
+
+    "invalid_blocks error falls back to errors when response_metadata.messages absent" in {
+      val json     =
+        """{
+          |  "ok": false,
+          |  "error": "invalid_blocks",
+          |  "errors": ["must define either `text` or `fields` [json-pointer:/blocks/0/type]"]
+          |}""".stripMargin
+      val response = decode[SlackResponse[chat.PostMessageResponse]](json).toOption.get
+      val ex       = intercept[SlackApiError] {
+        response.okOrThrow
+      }
+      ex.details shouldBe List("must define either `text` or `fields` [json-pointer:/blocks/0/type]")
     }
   }
 
