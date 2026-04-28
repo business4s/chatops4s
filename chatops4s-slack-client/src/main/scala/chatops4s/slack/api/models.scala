@@ -183,17 +183,26 @@ sealed trait SlackResponse[+T] {
 }
 
 object SlackResponse {
-  case class Ok[+T](value: T)   extends SlackResponse[T]       {
+  case class Ok[+T](value: T)                                     extends SlackResponse[T]       {
     def okOrThrow: T = value
   }
-  case class Err(error: String) extends SlackResponse[Nothing] {
-    def okOrThrow: Nothing = throw SlackApiError(error)
+  case class Err(error: String, details: List[String], raw: Json) extends SlackResponse[Nothing] {
+    def okOrThrow: Nothing = throw SlackApiError(error, details, Some(raw))
   }
 
   given [T: Decoder]: Decoder[SlackResponse[T]] = Decoder.instance { cursor =>
     cursor.get[Boolean]("ok").flatMap {
       case true  => cursor.as[T].map(Ok(_))
-      case false => cursor.getOrElse[String]("error")("unknown_error").map(Err(_))
+      case false =>
+        cursor.getOrElse[String]("error")("unknown_error").map { error =>
+          // Slack typically returns the same content under response_metadata.messages (with [ERROR]/[WARN]
+          // prefixes) and the top-level `errors` array. Prefer messages; fall back to errors if missing or empty.
+          val messages = cursor.downField("response_metadata").downField("messages").as[List[String]].getOrElse(Nil)
+          val details  =
+            if (messages.nonEmpty) messages
+            else cursor.downField("errors").as[List[String]].getOrElse(Nil)
+          Err(error, details, cursor.value)
+        }
     }
   }
 }
