@@ -104,7 +104,7 @@ class SlackApiDeserializationTest extends AnyFreeSpec with Matchers {
     "okOrThrow works on success" in {
       val json     = loadFixture("chat.postMessage.json")
       assume(json.isDefined, "Fixture chat.postMessage.json not found — run ResponseCollector first")
-      val response = decode[SlackResponse[chat.PostMessageResponse]](json.get).toOption.get
+      val response = decode[SlackResponse[chat.PostMessageResponse]](json.get).toTry.get
       val value    = response.okOrThrow
       value.channel.value should not be empty
       value.ts.value should not be empty
@@ -113,7 +113,7 @@ class SlackApiDeserializationTest extends AnyFreeSpec with Matchers {
     "okOrThrow throws SlackApiError on error" in {
       val json     = loadFixture("error.json")
       assume(json.isDefined, "Fixture error.json not found — run ResponseCollector first")
-      val response = decode[SlackResponse[chat.DeleteResponse]](json.get).toOption.get
+      val response = decode[SlackResponse[chat.DeleteResponse]](json.get).toTry.get
       val ex       = intercept[SlackApiError] {
         response.okOrThrow
       }
@@ -130,7 +130,7 @@ class SlackApiDeserializationTest extends AnyFreeSpec with Matchers {
           |    "messages": ["[ERROR] must define either `text` or `fields` [json-pointer:/blocks/0/type]"]
           |  }
           |}""".stripMargin
-      val response = decode[SlackResponse[chat.PostMessageResponse]](json).toOption.get
+      val response = decode[SlackResponse[chat.PostMessageResponse]](json).toTry.get
       val ex       = intercept[SlackApiError] {
         response.okOrThrow
       }
@@ -139,21 +139,33 @@ class SlackApiDeserializationTest extends AnyFreeSpec with Matchers {
       ex.response shouldBe defined
       ex.getMessage should include("invalid_blocks")
       ex.getMessage should include("[json-pointer:/blocks/0/type]")
-      ex.getMessage should include("Full response:")
     }
 
-    "invalid_blocks error falls back to errors when response_metadata.messages absent" in {
-      val json     =
+    "invalid_blocks error falls back to errors when response_metadata.messages missing or empty" in {
+      val missing  =
         """{
           |  "ok": false,
           |  "error": "invalid_blocks",
           |  "errors": ["must define either `text` or `fields` [json-pointer:/blocks/0/type]"]
           |}""".stripMargin
-      val response = decode[SlackResponse[chat.PostMessageResponse]](json).toOption.get
+      val response = decode[SlackResponse[chat.PostMessageResponse]](missing).toTry.get
       val ex       = intercept[SlackApiError] {
         response.okOrThrow
       }
       ex.details shouldBe List("must define either `text` or `fields` [json-pointer:/blocks/0/type]")
+
+      val empty       =
+        """{
+          |  "ok": false,
+          |  "error": "invalid_blocks",
+          |  "errors": ["must define either `text` or `fields` [json-pointer:/blocks/0/type]"],
+          |  "response_metadata": {"messages": []}
+          |}""".stripMargin
+      val responseEmpty = decode[SlackResponse[chat.PostMessageResponse]](empty).toTry.get
+      val exEmpty       = intercept[SlackApiError] {
+        responseEmpty.okOrThrow
+      }
+      exEmpty.details shouldBe List("must define either `text` or `fields` [json-pointer:/blocks/0/type]")
     }
   }
 

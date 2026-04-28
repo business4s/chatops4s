@@ -196,13 +196,11 @@ object SlackResponse {
       case false =>
         cursor.getOrElse[String]("error")("unknown_error").map { error =>
           // Slack typically returns the same content under response_metadata.messages (with [ERROR]/[WARN]
-          // prefixes) and the top-level `errors` array. Prefer messages; fall back to errors if absent.
-          val details = cursor
-            .downField("response_metadata")
-            .downField("messages")
-            .as[List[String]]
-            .orElse(cursor.downField("errors").as[List[String]])
-            .getOrElse(Nil)
+          // prefixes) and the top-level `errors` array. Prefer messages; fall back to errors if missing or empty.
+          val messages = cursor.downField("response_metadata").downField("messages").as[List[String]].getOrElse(Nil)
+          val details  =
+            if (messages.nonEmpty) messages
+            else cursor.downField("errors").as[List[String]].getOrElse(Nil)
           Err(error, details, cursor.value)
         }
     }
