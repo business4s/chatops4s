@@ -154,7 +154,7 @@ class SlackApiDeserializationTest extends AnyFreeSpec with Matchers {
       }
       ex.details shouldBe List("must define either `text` or `fields` [json-pointer:/blocks/0/type]")
 
-      val empty       =
+      val empty         =
         """{
           |  "ok": false,
           |  "error": "invalid_blocks",
