@@ -8,6 +8,7 @@ private[slack] object SlackManifest {
       appName: String,
       commands: Map[String, (String, String)],
       hasInteractivity: Boolean,
+      extraBotScopes: Set[String] = Set.empty,
   ): SlackAppManifest = {
     val baseScopes = List(
       "chat:write",
@@ -17,9 +18,12 @@ private[slack] object SlackManifest {
       "reactions:write",
     )
 
-    val botScopes =
+    val withCommands =
       if (commands.nonEmpty) baseScopes :+ "commands"
       else baseScopes
+
+    val extras    = extraBotScopes.toList.sorted.filterNot(withCommands.contains)
+    val botScopes = withCommands ++ extras
 
     val slashCommands =
       if (commands.nonEmpty)

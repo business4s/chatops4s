@@ -19,7 +19,13 @@
         "chat:write.public",
         "users:read",
         "users:read.email",
-        "reactions:write"
+        "reactions:write",
+        "channels:history",
+        "channels:read",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "mpim:history"
       ]
     }
   },

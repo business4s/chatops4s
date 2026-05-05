@@ -27,7 +27,13 @@
         "users:read",
         "users:read.email",
         "reactions:write",
-        "commands"
+        "commands",
+        "channels:history",
+        "channels:read",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "mpim:history"
       ]
     }
   },

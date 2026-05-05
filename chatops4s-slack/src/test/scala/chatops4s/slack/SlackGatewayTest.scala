@@ -629,6 +629,22 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
         SnapshotTest.testSnapshot(result.renderJson, "snapshots/manifest-with-forms.json")
       }
 
+      "should include scopes required by the registered IdempotencyCheck" in {
+        val customCheck = new IdempotencyCheck[IO] {
+          def findExisting(channel: String, threadTs: Option[Timestamp], key: IdempotencyKey): IO[Option[MessageId]] = IO.pure(None)
+          def recordSent(key: IdempotencyKey, messageId: MessageId): IO[Unit]                                        = IO.unit
+          override val requiredBotScopes: Set[String]                                                                = Set("custom:scope-a", "custom:scope-b")
+        }
+
+        val gateway = createGateway()
+        gateway.withIdempotencyCheck(customCheck).unsafeRunSync()
+
+        val manifest  = gateway.manifest("TestApp").unsafeRunSync()
+        val botScopes = manifest.oauth_config.scopes.flatMap(_.bot).getOrElse(Nil)
+
+        botScopes should contain allOf ("custom:scope-a", "custom:scope-b")
+      }
+
       "modifier should add extra scopes" in {
         val gateway = createGateway()
 
