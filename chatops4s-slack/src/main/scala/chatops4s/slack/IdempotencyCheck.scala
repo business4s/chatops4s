@@ -129,8 +129,8 @@ object IdempotencyCheck {
               }
               messagesF.map { messages =>
                 messages.collectFirst {
-                  case msg if msg.metadata.exists(m => extractKeyFromMetadata(m).contains(key.value)) =>
-                    MessageId(channelId, msg.ts.getOrElse(Timestamp("")))
+                  case msg if msg.ts.isDefined && msg.metadata.exists(m => extractKeyFromMetadata(m).contains(key.value)) =>
+                    MessageId(channelId, msg.ts.get)
                 }
               }
           }
