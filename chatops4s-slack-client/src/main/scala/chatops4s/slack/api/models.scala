@@ -282,6 +282,7 @@ object chat {
 
 case class ResponseMetadata(
     messages: Option[List[String]] = None,
+    next_cursor: Option[String] = None,
 ) derives Codec.AsObject
 
 object reactions {
@@ -407,6 +408,24 @@ object conversations {
   case class RepliesResponse(
       messages: List[Message],
       has_more: Option[Boolean] = None,
+      response_metadata: Option[ResponseMetadata] = None,
+  ) derives Codec.AsObject
+
+  case class ListRequest(
+      limit: Option[Int] = None,
+      cursor: Option[String] = None,
+      types: Option[String] = None,
+      exclude_archived: Option[Boolean] = None,
+  ) derives Codec.AsObject
+
+  case class ConversationInfo(
+      id: ChannelId,
+      name: Option[String] = None,
+      is_archived: Option[Boolean] = None,
+  ) derives Codec.AsObject
+
+  case class ListResponse(
+      channels: List[ConversationInfo],
       response_metadata: Option[ResponseMetadata] = None,
   ) derives Codec.AsObject
 }

@@ -8,8 +8,9 @@ import sttp.monad.syntax.*
 import java.time.{Duration, Instant}
 
 trait IdempotencyCheck[F[_]] {
-  def findExisting(channel: ChannelId, threadTs: Option[Timestamp], key: IdempotencyKey): F[Option[MessageId]]
+  def findExisting(channel: String, threadTs: Option[Timestamp], key: IdempotencyKey): F[Option[MessageId]]
   def recordSent(key: IdempotencyKey, messageId: MessageId): F[Unit]
+  def requiredBotScopes: Set[String] = Set.empty
 }
 
 object IdempotencyCheck {
@@ -18,9 +19,9 @@ object IdempotencyCheck {
 
   def noCheck[F[_]](using monad: MonadError[F]): IdempotencyCheck[F] =
     new IdempotencyCheck[F] {
-      def findExisting(channel: ChannelId, threadTs: Option[Timestamp], key: IdempotencyKey): F[Option[MessageId]] =
+      def findExisting(channel: String, threadTs: Option[Timestamp], key: IdempotencyKey): F[Option[MessageId]] =
         monad.unit(None)
-      def recordSent(key: IdempotencyKey, messageId: MessageId): F[Unit]                                           =
+      def recordSent(key: IdempotencyKey, messageId: MessageId): F[Unit]                                        =
         monad.unit(())
     }
 
@@ -74,7 +75,7 @@ object IdempotencyCheck {
   )(using monad: MonadError[F])
       extends IdempotencyCheck[F] {
 
-    def findExisting(channel: ChannelId, threadTs: Option[Timestamp], key: IdempotencyKey): F[Option[MessageId]] =
+    def findExisting(channel: String, threadTs: Option[Timestamp], key: IdempotencyKey): F[Option[MessageId]] =
       ref.get.map { entries =>
         entries.get(key).collect {
           case entry if !isExpired(entry) => entry.messageId
@@ -105,21 +106,42 @@ object IdempotencyCheck {
   )(using monad: MonadError[F])
       extends IdempotencyCheck[F] {
 
-    def findExisting(channel: ChannelId, threadTs: Option[Timestamp], key: IdempotencyKey): F[Option[MessageId]] =
+    override val requiredBotScopes: Set[String] =
+      Set(
+        "channels:history",
+        "groups:history",
+        "mpim:history",
+        "im:history",
+        "channels:read",
+        "groups:read",
+      )
+
+    def findExisting(channel: String, threadTs: Option[Timestamp], key: IdempotencyKey): F[Option[MessageId]] =
       clientRef.get.flatMap {
         case None         => monad.unit(None)
         case Some(client) =>
-          val messagesF = threadTs match {
-            case Some(ts) => client.fetchThreadReplies(channel, ts, scanLimit)
-            case None     => client.fetchRecentMessages(channel, scanLimit)
-          }
-          messagesF.map { messages =>
-            messages.collectFirst {
-              case msg if msg.metadata.exists(m => extractKeyFromMetadata(m).contains(key.value)) =>
-                MessageId(channel, msg.ts.getOrElse(Timestamp("")))
-            }
+          resolveChannelId(client, channel).flatMap {
+            case None            => monad.unit(None)
+            case Some(channelId) =>
+              val messagesF = threadTs match {
+                case Some(ts) => client.fetchThreadReplies(channelId, ts, scanLimit)
+                case None     => client.fetchRecentMessages(channelId, scanLimit)
+              }
+              messagesF.map { messages =>
+                messages.collectFirst {
+                  case msg if msg.metadata.exists(m => extractKeyFromMetadata(m).contains(key.value)) =>
+                    MessageId(channelId, msg.ts.getOrElse(Timestamp("")))
+                }
+              }
           }
       }
+
+    private def resolveChannelId(client: SlackClient[F], channel: String): F[Option[ChannelId]] =
+      if (looksLikeChannelId(channel)) monad.unit(Some(ChannelId(channel)))
+      else client.findChannelIdByName(channel)
+
+    private def looksLikeChannelId(s: String): Boolean =
+      s.nonEmpty && (s.head == 'C' || s.head == 'G' || s.head == 'D') && s.forall(c => c.isUpper || c.isDigit)
 
     def recordSent(key: IdempotencyKey, messageId: MessageId): F[Unit] =
       monad.unit(())

@@ -94,12 +94,18 @@ private[slack] class SlackGatewayImpl[F[_]](
 
   override def manifest(appName: String): F[SlackAppManifest] = {
     for {
-      handlers <- handlersRef.get
-      commands <- commandHandlersRef.get
-      forms    <- formHandlersRef.get
+      handlers    <- handlersRef.get
+      commands    <- commandHandlersRef.get
+      forms       <- formHandlersRef.get
+      idempotency <- idempotencyRef.get
     } yield {
       val commandDefs = commands.map((name, entry) => name.value -> (entry.description, entry.usageHint))
-      SlackManifest.generate(appName, commandDefs, hasInteractivity = handlers.nonEmpty || forms.nonEmpty)
+      SlackManifest.generate(
+        appName,
+        commandDefs,
+        hasInteractivity = handlers.nonEmpty || forms.nonEmpty,
+        extraBotScopes = idempotency.requiredBotScopes,
+      )
     }
   }
 
@@ -169,10 +175,9 @@ private[slack] class SlackGatewayImpl[F[_]](
     idempotencyKey match {
       case None      => withClient(_.postMessage(channel, text, buildBlocks(text, buttons), threadTs = None))
       case Some(key) =>
-        val channelId = ChannelId(channel)
         for {
           check    <- idempotencyRef.get
-          existing <- check.findExisting(channelId, threadTs = None, key)
+          existing <- check.findExisting(channel, threadTs = None, key)
           result   <- existing match {
                         case Some(found) => monad.unit(found)
                         case None        =>
@@ -191,7 +196,7 @@ private[slack] class SlackGatewayImpl[F[_]](
       case Some(key) =>
         for {
           check    <- idempotencyRef.get
-          existing <- check.findExisting(to.channel, threadTs = Some(to.ts), key)
+          existing <- check.findExisting(to.channel.value, threadTs = Some(to.ts), key)
           result   <- existing match {
                         case Some(found) => monad.unit(found)
                         case None        =>

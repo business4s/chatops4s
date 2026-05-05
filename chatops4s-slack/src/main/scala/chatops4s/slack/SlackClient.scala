@@ -25,7 +25,7 @@ import chatops4s.slack.monadSyntax.*
 
 private[slack] class SlackClient[F[_]](token: SlackBotToken, backend: Backend[F]) {
 
-  private given sttp.monad.MonadError[F] = backend.monad
+  private given monad: sttp.monad.MonadError[F] = backend.monad
 
   private val api = new SlackApi[F](backend, token)
 
@@ -125,5 +125,30 @@ private[slack] class SlackClient[F[_]](token: SlackBotToken, backend: Backend[F]
       include_all_metadata = Some(true),
     )
     api.conversations.replies(request).map(_.okOrThrow.messages)
+  }
+
+  def findChannelIdByName(name: String): F[Option[ChannelId]] = {
+    val needle = name.stripPrefix("#")
+
+    def loop(cursor: Option[String]): F[Option[ChannelId]] = {
+      val req = conversations.ListRequest(
+        limit = Some(200),
+        cursor = cursor,
+        types = Some("public_channel,private_channel"),
+        exclude_archived = Some(true),
+      )
+      api.conversations.list(req).map(_.okOrThrow).flatMap { resp =>
+        resp.channels.find(_.name.contains(needle)).map(_.id) match {
+          case Some(id) => monad.unit(Some(id))
+          case None     =>
+            resp.response_metadata.flatMap(_.next_cursor).filter(_.nonEmpty) match {
+              case Some(next) => loop(Some(next))
+              case None       => monad.unit(None)
+            }
+        }
+      }
+    }
+
+    loop(None)
   }
 }
