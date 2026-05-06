@@ -153,7 +153,17 @@ object IdempotencyCheck {
 
     def findExisting(client: SlackClient[F], channel: String, threadTs: Option[Timestamp], key: IdempotencyKey): F[Option[MessageId]] =
       resolveChannelId(client, channel).flatMap {
-        case None            => monad.unit(None)
+        case None            =>
+          // Returning None would let the caller post a fresh message and lose idempotency on retry:
+          // the next attempt would also fail to resolve and post again. Surface the failure so the
+          // caller decides (retry, alert, fall back). The keyCache/channelIdCache stay untouched --
+          // we never observed a successful resolution to record.
+          monad.error(
+            new RuntimeException(
+              s"Cannot verify idempotency for channel '$channel': failed to resolve channel ID. " +
+                "Posting without a check could duplicate the message.",
+            ),
+          )
         case Some(channelId) =>
           keyCache.get((channelId, key.value)).flatMap {
             case Some(found) => monad.unit(Some(found))
