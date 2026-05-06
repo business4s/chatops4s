@@ -30,7 +30,7 @@ class SlackToolingApi[F[_]](backend: Backend[F], token: SlackRefreshToken) {
       )
       .map(_.body)
       .map {
-        case Right(res) => res
-        case Left(err)  => throw SlackApiError("deserialization_error", List(s"$method: $err"))
+        case Right(res) => SlackResponse.withMethod(method, res)
+        case Left(err)  => throw SlackApiError(method, "deserialization_error", List(err.toString))
       }
 }

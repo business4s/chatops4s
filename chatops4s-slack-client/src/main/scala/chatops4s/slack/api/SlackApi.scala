@@ -60,15 +60,17 @@ class SlackApi[F[_]](backend: Backend[F], token: SlackBotToken) {
 
   object conversations {
 
+    // The conversations.* family seems to silently drop fields when the body is application/json
+    // (booleans like `include_all_metadata`, and even required fields like `channel`/`ts` on `replies`),
+    // so we form-encode all of them.
+
     // https://docs.slack.dev/reference/methods/conversations.history
-    def history(req: HistoryRequest): F[SlackResponse[HistoryResponse]] = post("conversations.history", req)
+    def history(req: HistoryRequest): F[SlackResponse[HistoryResponse]] = postForm("conversations.history", req)
 
     // https://docs.slack.dev/reference/methods/conversations.replies
-    def replies(req: RepliesRequest): F[SlackResponse[RepliesResponse]] = post("conversations.replies", req)
+    def replies(req: RepliesRequest): F[SlackResponse[RepliesResponse]] = postForm("conversations.replies", req)
 
     // https://docs.slack.dev/reference/methods/conversations.list
-    // Sent form-encoded: this method silently ignores boolean params (e.g. exclude_archived) when
-    // the body is application/json.
     def list(req: ListRequest): F[SlackResponse[ListResponse]] = postForm("conversations.list", req)
   }
 
@@ -94,8 +96,8 @@ class SlackApi[F[_]](backend: Backend[F], token: SlackBotToken) {
       )
       .map(_.body)
       .map {
-        case Right(res) => res
-        case Left(err)  => throw SlackApiError("deserialization_error", List(s"$method: $err"))
+        case Right(res) => SlackResponse.withMethod(method, res)
+        case Left(err)  => throw SlackApiError(method, "deserialization_error", List(err.toString))
       }
 
   private def post[Req: io.circe.Encoder, Res: io.circe.Decoder](method: String, req: Req): F[SlackResponse[Res]] =
@@ -119,8 +121,8 @@ class SlackApi[F[_]](backend: Backend[F], token: SlackBotToken) {
       )
       .map(_.body)
       .map {
-        case Right(res) => res
-        case Left(err)  => throw SlackApiError("deserialization_error", List(s"$method: $err"))
+        case Right(res) => SlackResponse.withMethod(method, res)
+        case Left(err)  => throw SlackApiError(method, "deserialization_error", List(err.toString))
       }
 
   // Only handles primitive fields. Throws on nested objects/arrays so a future request DTO that

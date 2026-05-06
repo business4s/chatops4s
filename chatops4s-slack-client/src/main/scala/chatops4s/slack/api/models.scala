@@ -186,8 +186,8 @@ object SlackResponse {
   case class Ok[+T](value: T)                                     extends SlackResponse[T]       {
     def okOrThrow: T = value
   }
-  case class Err(error: String, details: List[String], raw: Json) extends SlackResponse[Nothing] {
-    def okOrThrow: Nothing = throw SlackApiError(error, details, Some(raw))
+  case class Err(method: String, error: String, details: List[String], raw: Json) extends SlackResponse[Nothing] {
+    def okOrThrow: Nothing = throw SlackApiError(method, error, details, Some(raw))
   }
 
   given [T: Decoder]: Decoder[SlackResponse[T]] = Decoder.instance { cursor =>
@@ -201,9 +201,14 @@ object SlackResponse {
           val details  =
             if (messages.nonEmpty) messages
             else cursor.downField("errors").as[List[String]].getOrElse(Nil)
-          Err(error, details, cursor.value)
+          Err(method = "", error = error, details = details, raw = cursor.value)
         }
     }
+  }
+
+  def withMethod[T](method: String, response: SlackResponse[T]): SlackResponse[T] = response match {
+    case e: Err   => e.copy(method = method)
+    case ok: Ok[T] => ok
   }
 }
 

@@ -28,8 +28,8 @@ class SlackAppApi[F[_]](backend: Backend[F], token: SlackAppToken) {
           )
           .map(_.body)
           .map {
-            case Right(res) => res
-            case Left(err)  => throw SlackApiError("deserialization_error", List(s"apps.connections.open: $err"))
+            case Right(res) => SlackResponse.withMethod("apps.connections.open", res)
+            case Left(err)  => throw SlackApiError("apps.connections.open", "deserialization_error", List(err.toString))
           }
     }
   }
