@@ -39,7 +39,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
     val formHandlersRef                            = Ref.of[IO, Map[FormId[?, ?], FormEntry[IO]]](Map.empty).unsafeRunSync()
     val cacheRef                                   = Ref.of[IO, UserInfoCache[IO]](cache).unsafeRunSync()
     val check                                      =
-      idempotencyCheck.getOrElse(IdempotencyCheck.slackScan[IO](clientRef).unsafeRunSync())
+      idempotencyCheck.getOrElse(IdempotencyCheck.slackScan[IO]().unsafeRunSync())
     val idempotencyRef                             = Ref.of[IO, IdempotencyCheck[IO]](check).unsafeRunSync()
     val defaultErrorHandler: Throwable => IO[Unit] = e => monad.blocking(println(s"Test error handler: ${e.getMessage}"))
     val errorHandlerRef                            = Ref.of[IO, Throwable => IO[Unit]](defaultErrorHandler).unsafeRunSync()
@@ -647,9 +647,11 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
 
       "should include scopes required by the registered IdempotencyCheck" in {
         val customCheck = new IdempotencyCheck[IO] {
-          def findExisting(channel: String, threadTs: Option[Timestamp], key: IdempotencyKey): IO[Option[MessageId]] = IO.pure(None)
-          def recordSent(key: IdempotencyKey, messageId: MessageId): IO[Unit]                                        = IO.unit
-          override val requiredBotScopes: Set[String]                                                                = Set("custom:scope-a", "custom:scope-b")
+          def findExisting(client: SlackClient[IO], channel: String, threadTs: Option[Timestamp], key: IdempotencyKey): IO[Option[MessageId]] =
+            IO.pure(None)
+          def recordSent(key: IdempotencyKey, messageId: MessageId): IO[Unit]                                                                 = IO.unit
+          override val requiredBotScopes: Set[String]                                                                                         =
+            Set("custom:scope-a", "custom:scope-b")
         }
 
         val gateway = createGateway()
@@ -1021,13 +1023,14 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
       }
 
       "slackScan should cache channel name -> id resolution across calls" in {
+        // Default channel lookup is BotChannelsOnly, which hits users.conversations.
         var listCallCount = 0
         val listResp      =
           """{"ok":true,"channels":[{"id":"C123","name":"general"}],"response_metadata":{"next_cursor":""}}"""
         val backend       = MockBackend
           .create()
           .whenRequestMatches { req =>
-            val matches = req.uri.toString().contains("conversations.list")
+            val matches = req.uri.toString().contains("users.conversations")
             if (matches) listCallCount += 1
             matches
           }

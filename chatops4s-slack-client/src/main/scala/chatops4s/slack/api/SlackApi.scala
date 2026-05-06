@@ -12,7 +12,11 @@ import chatops4s.slack.api.chat.{
 }
 import chatops4s.slack.api.conversations.{HistoryRequest, HistoryResponse, ListRequest, ListResponse, RepliesRequest, RepliesResponse}
 import chatops4s.slack.api.reactions.{AddRequest, AddResponse, RemoveRequest, RemoveResponse}
-import chatops4s.slack.api.users.{InfoRequest as UsersInfoRequest, InfoResponse as UsersInfoResponse}
+import chatops4s.slack.api.users.{
+  ConversationsListRequest as UsersConversationsListRequest,
+  InfoRequest as UsersInfoRequest,
+  InfoResponse as UsersInfoResponse,
+}
 import chatops4s.slack.api.views.{OpenRequest, OpenResponse}
 import io.circe.syntax.*
 import sttp.client4.*
@@ -63,7 +67,9 @@ class SlackApi[F[_]](backend: Backend[F], token: SlackBotToken) {
     def replies(req: RepliesRequest): F[SlackResponse[RepliesResponse]] = post("conversations.replies", req)
 
     // https://docs.slack.dev/reference/methods/conversations.list
-    def list(req: ListRequest): F[SlackResponse[ListResponse]] = post("conversations.list", req)
+    // Sent form-encoded: this method silently ignores boolean params (e.g. exclude_archived) when
+    // the body is application/json.
+    def list(req: ListRequest): F[SlackResponse[ListResponse]] = postForm("conversations.list", req)
   }
 
   object users {
@@ -71,6 +77,11 @@ class SlackApi[F[_]](backend: Backend[F], token: SlackBotToken) {
     // https://docs.slack.dev/reference/methods/users.info
     def info(req: UsersInfoRequest): F[SlackResponse[UsersInfoResponse]] =
       get("users.info", Map("user" -> req.user.value))
+
+    // https://docs.slack.dev/reference/methods/users.conversations
+    // Sent form-encoded for the same reason as conversations.list.
+    def conversationsList(req: UsersConversationsListRequest): F[SlackResponse[ListResponse]] =
+      postForm("users.conversations", req)
   }
 
   private def get[Res: io.circe.Decoder](method: String, params: Map[String, String]): F[SlackResponse[Res]] =
@@ -88,18 +99,39 @@ class SlackApi[F[_]](backend: Backend[F], token: SlackBotToken) {
       }
 
   private def post[Req: io.circe.Encoder, Res: io.circe.Decoder](method: String, req: Req): F[SlackResponse[Res]] =
+    sendPost(method)(_.contentType("application/json").body(req.asJson.deepDropNullValues.noSpaces))
+
+  // Slack's older list/read endpoints (conversations.list, users.conversations, ...) silently drop
+  // boolean params when the body is application/json. Form-encoding is the documented workaround.
+  private def postForm[Req: io.circe.Encoder, Res: io.circe.Decoder](method: String, req: Req): F[SlackResponse[Res]] =
+    sendPost(method)(_.body(jsonToFormParams(req.asJson.deepDropNullValues)))
+
+  private def sendPost[Res: io.circe.Decoder](
+      method: String,
+  )(withBody: Request[Either[String, String]] => Request[Either[String, String]]): F[SlackResponse[Res]] =
     backend
       .send(
-        basicRequest
-          .post(uri"$baseUrl/$method")
-          .header("Authorization", s"Bearer ${token.value}")
-          .contentType("application/json")
-          .body(req.asJson.deepDropNullValues.noSpaces)
-          .response(asJsonAlways[SlackResponse[Res]]),
+        withBody(
+          basicRequest
+            .post(uri"$baseUrl/$method")
+            .header("Authorization", s"Bearer ${token.value}"),
+        ).response(asJsonAlways[SlackResponse[Res]]),
       )
       .map(_.body)
       .map {
         case Right(res) => res
         case Left(err)  => throw SlackApiError("deserialization_error", List(s"$method: $err"))
       }
+
+  // Only handles primitive fields. Throws on nested objects/arrays so a future request DTO that
+  // adds one fails loudly here instead of silently posting a JSON-encoded string to Slack.
+  // TODO we should do small internal derived typeclass instead
+  private def jsonToFormParams(json: io.circe.Json): Map[String, String] =
+    json.asObject.fold(Map.empty[String, String]) { obj =>
+      obj.toMap.collect {
+        case (k, v) if !v.isNull =>
+          require(!v.isObject && !v.isArray, s"postForm cannot encode nested field '$k'; use post (JSON) instead")
+          k -> v.asString.getOrElse(v.noSpaces)
+      }
+    }
 }

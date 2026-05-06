@@ -23,7 +23,7 @@ import sttp.client4.*
 import sttp.monad.syntax.*
 import chatops4s.slack.monadSyntax.*
 
-private[slack] class SlackClient[F[_]](token: SlackBotToken, backend: Backend[F]) {
+class SlackClient[F[_]](token: SlackBotToken, backend: Backend[F]) {
 
   private given monad: sttp.monad.MonadError[F] = backend.monad
 
@@ -127,28 +127,31 @@ private[slack] class SlackClient[F[_]](token: SlackBotToken, backend: Backend[F]
     api.conversations.replies(request).map(_.okOrThrow.messages)
   }
 
-  def findChannelIdByName(name: String): F[Option[ChannelId]] = {
-    val needle = name.stripPrefix("#")
+  // BotChannelsOnly uses Tier 3 `users.conversations` -- vastly fewer results than `conversations.list`
+  // when the workspace has many channels but the bot is in few. AllChannels paginates the workspace.
+  def listChannels(lookup: ChannelLookup, limit: Int = 200): F[ConversationsPage[F]] =
+    fetchChannelsPage(lookup, cursor = None, limit)
 
-    def loop(cursor: Option[String]): F[Option[ChannelId]] = {
-      val req = conversations.ListRequest(
-        limit = Some(200),
-        cursor = cursor,
-        types = Some("public_channel,private_channel"),
-        exclude_archived = Some(true),
-      )
-      api.conversations.list(req).map(_.okOrThrow).flatMap { resp =>
-        resp.channels.find(_.name.contains(needle)).map(_.id) match {
-          case Some(id) => monad.unit(Some(id))
-          case None     =>
-            resp.response_metadata.flatMap(_.next_cursor).filter(_.nonEmpty) match {
-              case Some(next) => loop(Some(next))
-              case None       => monad.unit(None)
-            }
-        }
-      }
+  private def fetchChannelsPage(lookup: ChannelLookup, cursor: Option[String], limit: Int): F[ConversationsPage[F]] = {
+    val types     = Some("public_channel,private_channel")
+    val responseF = lookup match {
+      case ChannelLookup.BotChannelsOnly =>
+        api.users.conversationsList(
+          users.ConversationsListRequest(limit = Some(limit), cursor = cursor, types = types, exclude_archived = Some(true)),
+        )
+      case ChannelLookup.AllChannels     =>
+        api.conversations.list(
+          conversations.ListRequest(limit = Some(limit), cursor = cursor, types = types, exclude_archived = Some(true)),
+        )
     }
-
-    loop(None)
+    responseF.map(_.okOrThrow).map { resp =>
+      val nextCursor = resp.response_metadata.flatMap(_.next_cursor).filter(_.nonEmpty)
+      ConversationsPage(resp.channels, nextCursor.map(c => fetchChannelsPage(lookup, Some(c), limit)))
+    }
   }
 }
+
+case class ConversationsPage[F[_]](
+    channels: List[conversations.ConversationInfo],
+    next: Option[F[ConversationsPage[F]]],
+)

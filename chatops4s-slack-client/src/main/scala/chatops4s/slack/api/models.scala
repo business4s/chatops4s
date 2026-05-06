@@ -435,6 +435,15 @@ object users {
   // https://docs.slack.dev/reference/methods/users.info
   case class InfoRequest(user: UserId) derives Codec.AsObject
 
+  // https://docs.slack.dev/reference/methods/users.conversations
+  case class ConversationsListRequest(
+      user: Option[UserId] = None,
+      limit: Option[Int] = None,
+      cursor: Option[String] = None,
+      types: Option[String] = None,
+      exclude_archived: Option[Boolean] = None,
+  ) derives Codec.AsObject
+
   case class UserProfile(
       email: Option[Email] = None,
       display_name: Option[String] = None,

@@ -21,9 +21,7 @@
         "users:read.email",
         "reactions:write",
         "channels:history",
-        "channels:read",
         "groups:history",
-        "groups:read",
         "im:history",
         "mpim:history"
       ]
