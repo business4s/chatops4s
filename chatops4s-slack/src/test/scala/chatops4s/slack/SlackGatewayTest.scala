@@ -2,7 +2,6 @@ package chatops4s.slack
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
-import cats.syntax.traverse.*
 import chatops4s.slack.api.{ChannelId, ConversationId, Email, SlackAppToken, SlackBotToken, TeamId, Timestamp, TriggerId, UserId, users}
 import chatops4s.slack.api.manifest.{BotUser, DisplayInformation, Features, SlackAppManifest}
 import chatops4s.slack.api.socket.*
@@ -39,7 +38,8 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
     val commandHandlersRef                         = Ref.of[IO, Map[CommandName, CommandEntry[IO]]](Map.empty).unsafeRunSync()
     val formHandlersRef                            = Ref.of[IO, Map[FormId[?, ?], FormEntry[IO]]](Map.empty).unsafeRunSync()
     val cacheRef                                   = Ref.of[IO, UserInfoCache[IO]](cache).unsafeRunSync()
-    val check                                      = idempotencyCheck.getOrElse(IdempotencyCheck.slackScan[IO](clientRef))
+    val check                                      =
+      idempotencyCheck.getOrElse(IdempotencyCheck.slackScan[IO]().unsafeRunSync())
     val idempotencyRef                             = Ref.of[IO, IdempotencyCheck[IO]](check).unsafeRunSync()
     val defaultErrorHandler: Throwable => IO[Unit] = e => monad.blocking(println(s"Test error handler: ${e.getMessage}"))
     val errorHandlerRef                            = Ref.of[IO, Throwable => IO[Unit]](defaultErrorHandler).unsafeRunSync()
@@ -75,8 +75,8 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
 
       "should send a message with buttons" in {
         val gateway = createGateway(MockBackend.withPostMessage(okPostMessage))
-        val approve = gateway.registerButton[String](_ => IO.unit).unsafeRunSync()
-        val reject  = gateway.registerButton[String](_ => IO.unit).unsafeRunSync()
+        val approve = gateway.registerButton[String]("approve")(_ => IO.unit).unsafeRunSync()
+        val reject  = gateway.registerButton[String]("reject")(_ => IO.unit).unsafeRunSync()
 
         val result = gateway
           .send(
@@ -109,8 +109,8 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
           .thenRespondAdjust(okPostMessage)
 
         val gateway    = createGateway(backend)
-        val emptyBtn   = gateway.registerButton[String](_ => IO.unit).unsafeRunSync()
-        val nonEmptyId = gateway.registerButton[String](_ => IO.unit).unsafeRunSync()
+        val emptyBtn   = gateway.registerButton[String]("empty")(_ => IO.unit).unsafeRunSync()
+        val nonEmptyId = gateway.registerButton[String]("non-empty")(_ => IO.unit).unsafeRunSync()
 
         gateway
           .send(
@@ -169,7 +169,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
       "should reply in thread with buttons" in {
         val body    = """{"ok":true,"channel":"C123","ts":"1234567891.456"}"""
         val gateway = createGateway(MockBackend.withPostMessage(body))
-        val btn     = gateway.registerButton[String](_ => IO.unit).unsafeRunSync()
+        val btn     = gateway.registerButton[String]("ok")(_ => IO.unit).unsafeRunSync()
 
         val result = gateway
           .reply(
@@ -210,12 +210,28 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
     }
 
     "onButton" - {
-      "should generate unique button IDs" in {
+      "should reject duplicate button name" in {
+        val gateway = createGateway()
+        gateway.registerButton[String]("dup")(_ => IO.unit).unsafeRunSync()
+
+        val ex = intercept[IllegalArgumentException] {
+          gateway.registerButton[String]("dup")(_ => IO.unit).unsafeRunSync()
+        }
+        ex.getMessage should include("dup")
+      }
+
+      "should reject blank button name" in {
         val gateway = createGateway()
 
-        val ids = (1 to 10).toList.traverse(_ => gateway.registerButton[String](_ => IO.unit)).unsafeRunSync()
+        intercept[IllegalArgumentException] {
+          gateway.registerButton[String]("  ")(_ => IO.unit).unsafeRunSync()
+        }
+      }
 
-        ids.map(_.value).toSet.size shouldBe 10
+      "should use the registered name as the action_id" in {
+        val gateway = createGateway()
+        val btn     = gateway.registerButton[String]("approve-deploy")(_ => IO.unit).unsafeRunSync()
+        btn.value shouldBe "approve-deploy"
       }
     }
 
@@ -225,7 +241,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
         var captured: Option[ButtonClick[String]] = None
 
         val btnId = gateway
-          .registerButton[String] { click =>
+          .registerButton[String]("dispatch-test") { click =>
             IO { captured = Some(click) }
           }
           .unsafeRunSync()
@@ -243,7 +259,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
         val gateway = createGateway()
         var called  = false
 
-        gateway.registerButton[String] { _ => IO { called = true } }.unsafeRunSync()
+        gateway.registerButton[String]("only-btn") { _ => IO { called = true } }.unsafeRunSync()
 
         val payload = interactionPayload("unknown_action_id", "v")
         gateway.handleInteractionPayload(payload).unsafeRunSync()
@@ -255,8 +271,8 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
         val gateway = createGateway()
         var count   = 0
 
-        val btn1 = gateway.registerButton[String] { _ => IO { count += 1 } }.unsafeRunSync()
-        val btn2 = gateway.registerButton[String] { _ => IO { count += 10 } }.unsafeRunSync()
+        val btn1 = gateway.registerButton[String]("btn1") { _ => IO { count += 1 } }.unsafeRunSync()
+        val btn2 = gateway.registerButton[String]("btn2") { _ => IO { count += 10 } }.unsafeRunSync()
 
         val payload = InteractionPayload(
           `type` = "block_actions",
@@ -610,7 +626,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
       "with buttons" in {
         val gateway = createGateway()
 
-        gateway.registerButton[String](_ => IO.unit).unsafeRunSync()
+        gateway.registerButton[String]("btn")(_ => IO.unit).unsafeRunSync()
 
         val result = gateway.manifest("TestApp").unsafeRunSync()
 
@@ -622,7 +638,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
 
         case class TestForm(name: String) derives FormDef
 
-        gateway.registerForm[TestForm, String](_ => IO.unit).unsafeRunSync()
+        gateway.registerForm[TestForm, String]("form")(_ => IO.unit).unsafeRunSync()
 
         val result = gateway.manifest("TestApp").unsafeRunSync()
 
@@ -631,9 +647,11 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
 
       "should include scopes required by the registered IdempotencyCheck" in {
         val customCheck = new IdempotencyCheck[IO] {
-          def findExisting(channel: String, threadTs: Option[Timestamp], key: IdempotencyKey): IO[Option[MessageId]] = IO.pure(None)
-          def recordSent(key: IdempotencyKey, messageId: MessageId): IO[Unit]                                        = IO.unit
-          override val requiredBotScopes: Set[String]                                                                = Set("custom:scope-a", "custom:scope-b")
+          def findExisting(client: SlackClient[IO], channel: String, threadTs: Option[Timestamp], key: IdempotencyKey): IO[Option[MessageId]] =
+            IO.pure(None)
+          def recordSent(key: IdempotencyKey, messageId: MessageId): IO[Unit]                                                                 = IO.unit
+          override val requiredBotScopes: Set[String]                                                                                         =
+            Set("custom:scope-a", "custom:scope-b")
         }
 
         val gateway = createGateway()
@@ -950,6 +968,87 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
         postMessageCallCount shouldBe 3
       }
 
+      "slackScan should cache positive scan result and skip subsequent scans" in {
+        var historyCallCount = 0
+        val metadataJson     = """{"event_type":"chatops4s_idempotency","event_payload":{"key":"my-key"}}"""
+        val historyResponse  = s"""{"ok":true,"messages":[{"ts":"1234567890.999","metadata":$metadataJson}]}"""
+        val backend          = MockBackend
+          .create()
+          .whenRequestMatches { req =>
+            val matches = req.uri.toString().contains("conversations.history")
+            if (matches) historyCallCount += 1
+            matches
+          }
+          .thenRespondAdjust(historyResponse)
+          .whenRequestMatches(_.uri.toString().contains("chat.postMessage"))
+          .thenRespondAdjust(okPostMsg)
+
+        val gateway = createGateway(backend)
+        val r1      = gateway.send("C123", "Hi", idempotencyKey = Some(IdempotencyKey("my-key"))).unsafeRunSync()
+        val r2      = gateway.send("C123", "Hi", idempotencyKey = Some(IdempotencyKey("my-key"))).unsafeRunSync()
+        val r3      = gateway.send("C123", "Hi", idempotencyKey = Some(IdempotencyKey("my-key"))).unsafeRunSync()
+
+        r1 shouldBe MessageId(ChannelId("C123"), Timestamp("1234567890.999"))
+        r2 shouldBe r1
+        r3 shouldBe r1
+        historyCallCount shouldBe 1
+      }
+
+      "slackScan should skip the history scan for keys it already recorded itself" in {
+        var historyCallCount     = 0
+        var postMessageCallCount = 0
+        val backend              = MockBackend
+          .create()
+          .whenRequestMatches { req =>
+            val matches = req.uri.toString().contains("conversations.history")
+            if (matches) historyCallCount += 1
+            matches
+          }
+          .thenRespondAdjust("""{"ok":true,"messages":[]}""")
+          .whenRequestMatches { req =>
+            val matches = req.uri.toString().contains("chat.postMessage")
+            if (matches) postMessageCallCount += 1
+            matches
+          }
+          .thenRespondAdjust(okPostMsg)
+
+        val gateway = createGateway(backend)
+        gateway.send("C123", "Hi", idempotencyKey = Some(IdempotencyKey("my-key"))).unsafeRunSync()
+        val r2      = gateway.send("C123", "Hi", idempotencyKey = Some(IdempotencyKey("my-key"))).unsafeRunSync()
+
+        // First call: history scan (empty) + post. Second call: served from L1, no history, no post.
+        historyCallCount shouldBe 1
+        postMessageCallCount shouldBe 1
+        r2 shouldBe MessageId(ChannelId("C123"), Timestamp("1234567890.123"))
+      }
+
+      "slackScan should cache channel name -> id resolution across calls" in {
+        // Default channel lookup is BotChannelsOnly, which hits users.conversations.
+        var listCallCount = 0
+        val listResp      =
+          """{"ok":true,"channels":[{"id":"C123","name":"general"}],"response_metadata":{"next_cursor":""}}"""
+        val backend       = MockBackend
+          .create()
+          .whenRequestMatches { req =>
+            val matches = req.uri.toString().contains("users.conversations")
+            if (matches) listCallCount += 1
+            matches
+          }
+          .thenRespondAdjust(listResp)
+          .whenRequestMatches(_.uri.toString().contains("conversations.history"))
+          .thenRespondAdjust("""{"ok":true,"messages":[]}""")
+          .whenRequestMatches(_.uri.toString().contains("chat.postMessage"))
+          .thenRespondAdjust(okPostMsg)
+
+        val gateway = createGateway(backend)
+        // Use channel name (not ID) to force the lookup path.
+        gateway.send("general", "Hi", idempotencyKey = Some(IdempotencyKey("k1"))).unsafeRunSync()
+        gateway.send("general", "Hi", idempotencyKey = Some(IdempotencyKey("k2"))).unsafeRunSync()
+        gateway.send("general", "Hi", idempotencyKey = Some(IdempotencyKey("k3"))).unsafeRunSync()
+
+        listCallCount shouldBe 1
+      }
+
       "send with inMemory check should use local cache and skip Slack scan" in {
         given monad: sttp.monad.MonadError[IO] = MockBackend.create().monad
         var historyCallCount                   = 0
@@ -977,14 +1076,36 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
     }
 
     "forms" - {
-      "should generate unique form IDs" in {
+      "should reject duplicate form name" in {
         val gateway = createGateway()
 
         case class TestForm(name: String) derives FormDef
 
-        val ids = (1 to 10).toList.traverse(_ => gateway.registerForm[TestForm, String](_ => IO.unit)).unsafeRunSync()
+        gateway.registerForm[TestForm, String]("dup")(_ => IO.unit).unsafeRunSync()
 
-        ids.map(_.value).toSet.size shouldBe 10
+        val ex = intercept[IllegalArgumentException] {
+          gateway.registerForm[TestForm, String]("dup")(_ => IO.unit).unsafeRunSync()
+        }
+        ex.getMessage should include("dup")
+      }
+
+      "should reject blank form name" in {
+        val gateway = createGateway()
+
+        case class TestForm(name: String) derives FormDef
+
+        intercept[IllegalArgumentException] {
+          gateway.registerForm[TestForm, String]("  ")(_ => IO.unit).unsafeRunSync()
+        }
+      }
+
+      "should use the registered name as the callback_id" in {
+        val gateway = createGateway()
+
+        case class TestForm(name: String) derives FormDef
+
+        val formId = gateway.registerForm[TestForm, String]("deploy-form")(_ => IO.unit).unsafeRunSync()
+        formId.value shouldBe "deploy-form"
       }
 
       "should open form with correct view JSON" in {
@@ -1007,7 +1128,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
 
         case class DeployForm(service: String, version: String, dryRun: Boolean) derives FormDef
 
-        val formId = gateway.registerForm[DeployForm, String](_ => IO.unit).unsafeRunSync()
+        val formId = gateway.registerForm[DeployForm, String]("deploy")(_ => IO.unit).unsafeRunSync()
         gateway.openForm(TriggerId("trigger-123"), formId, "Deploy Service", submitLabel = "Deploy").unsafeRunSync()
 
         capturedBody shouldBe defined
@@ -1041,7 +1162,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
         case class TestSubmitForm(name: String, count: Int) derives FormDef
 
         val formId = gateway
-          .registerForm[TestSubmitForm, String] { submission =>
+          .registerForm[TestSubmitForm, String]("submit-test") { submission =>
             IO { captured = Some(submission) }
           }
           .unsafeRunSync()
@@ -1068,7 +1189,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
         case class TestForm(name: String) derives FormDef
 
         gateway
-          .registerForm[TestForm, String] { _ =>
+          .registerForm[TestForm, String]("only-form") { _ =>
             IO { called = true }
           }
           .unsafeRunSync()
@@ -1499,7 +1620,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
 
         case class DateForm(date: LocalDate) derives FormDef
 
-        val formId = gateway.registerForm[DateForm, String](_ => IO.unit).unsafeRunSync()
+        val formId = gateway.registerForm[DateForm, String]("date-form")(_ => IO.unit).unsafeRunSync()
         gateway.openForm(TriggerId("trigger-123"), formId, "Pick Date").unsafeRunSync()
 
         capturedBody shouldBe defined
@@ -1529,7 +1650,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
 
         case class UserForm(user: UserId) derives FormDef
 
-        val formId = gateway.registerForm[UserForm, String](_ => IO.unit).unsafeRunSync()
+        val formId = gateway.registerForm[UserForm, String]("user-form")(_ => IO.unit).unsafeRunSync()
         gateway.openForm(TriggerId("trigger-123"), formId, "Pick User").unsafeRunSync()
 
         capturedBody shouldBe defined
@@ -1559,7 +1680,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
 
         case class EmailForm(email: Email) derives FormDef
 
-        val formId = gateway.registerForm[EmailForm, String](_ => IO.unit).unsafeRunSync()
+        val formId = gateway.registerForm[EmailForm, String]("email-form")(_ => IO.unit).unsafeRunSync()
         gateway.openForm(TriggerId("trigger-123"), formId, "Enter Email").unsafeRunSync()
 
         capturedBody shouldBe defined
@@ -1602,7 +1723,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
             convo: ConversationId,
         ) derives FormDef
 
-        val formId = gateway.registerForm[FullForm, String](_ => IO.unit).unsafeRunSync()
+        val formId = gateway.registerForm[FullForm, String]("full-form")(_ => IO.unit).unsafeRunSync()
         gateway.openForm(TriggerId("trigger-123"), formId, "Full Form").unsafeRunSync()
 
         capturedBody shouldBe defined
@@ -1637,7 +1758,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
         case class TestMetaForm(name: String) derives FormDef
         case class DeployMeta(env: String) derives io.circe.Encoder.AsObject, io.circe.Decoder
 
-        val formId = gateway.registerForm[TestMetaForm, DeployMeta] { sub => IO { capturedSub = Some(sub) } }.unsafeRunSync()
+        val formId = gateway.registerForm[TestMetaForm, DeployMeta]("meta-form") { sub => IO { capturedSub = Some(sub) } }.unsafeRunSync()
         gateway.openForm(TriggerId("t"), formId, "Test", DeployMeta("prod")).unsafeRunSync()
 
         val payload = viewSubmissionPayload(
@@ -1657,7 +1778,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
 
         case class SimpleForm(name: String) derives FormDef
 
-        val formId = gateway.registerForm[SimpleForm, String] { sub => IO { capturedMeta = Some(sub.metadata) } }.unsafeRunSync()
+        val formId = gateway.registerForm[SimpleForm, String]("simple-form") { sub => IO { capturedMeta = Some(sub.metadata) } }.unsafeRunSync()
         gateway.openForm(TriggerId("t"), formId, "Test", "ctx-123").unsafeRunSync()
 
         val payload = viewSubmissionPayload(
@@ -1676,7 +1797,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
 
         case class SimpleForm2(name: String) derives FormDef
 
-        val formId = gateway.registerForm[SimpleForm2, String] { sub => IO { capturedMeta = Some(sub.metadata) } }.unsafeRunSync()
+        val formId = gateway.registerForm[SimpleForm2, String]("simple-form-2") { sub => IO { capturedMeta = Some(sub.metadata) } }.unsafeRunSync()
 
         val payload = viewSubmissionPayload(
           callbackId = formId.value,
@@ -1724,7 +1845,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
         gateway.onError(e => IO { capturedError = Some(e) }).unsafeRunSync()
 
         val btnId = gateway
-          .registerButton[String] { _ =>
+          .registerButton[String]("err-btn") { _ =>
             IO.raiseError(new RuntimeException("boom"))
           }
           .unsafeRunSync()
@@ -1749,7 +1870,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
         case class ErrorForm(name: String) derives FormDef
 
         val formId = gateway
-          .registerForm[ErrorForm, String] { _ =>
+          .registerForm[ErrorForm, String]("err-form") { _ =>
             IO.raiseError(new RuntimeException("form-boom"))
           }
           .unsafeRunSync()

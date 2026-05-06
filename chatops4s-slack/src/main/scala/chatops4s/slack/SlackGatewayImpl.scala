@@ -11,7 +11,6 @@ import sttp.monad.syntax.*
 import chatops4s.slack.monadSyntax.*
 
 import java.nio.file.Paths
-import java.util.UUID
 
 private[slack] type ErasedHandler[F[_]]        = ButtonClick[String] => F[Unit]
 private[slack] type ErasedCommandHandler[F[_]] = SlashCommandPayload => F[CommandResponse]
@@ -53,10 +52,19 @@ private[slack] class SlackGatewayImpl[F[_]](
 
   // TODO: Handlers accumulate indefinitely by design. Buttons/commands/forms are registered once
   // at startup and reused. If dynamic registration is needed in the future, add TTL or unregister methods.
-  override def registerButton[T <: String](handler: ButtonClick[T] => F[Unit]): F[ButtonId[T]] = {
-    val id     = ButtonId[T](UUID.randomUUID().toString)
-    val erased = handler.asInstanceOf[ErasedHandler[F]]
-    handlersRef.update(_ + (id -> erased)).as(id)
+  override def registerButton[T <: String](name: String)(handler: ButtonClick[T] => F[Unit]): F[ButtonId[T]] = {
+    if (name.trim.isEmpty)
+      monad.error(new IllegalArgumentException("Button name must be non-empty"))
+    else {
+      val id     = ButtonId[T](name)
+      val erased = handler.asInstanceOf[ErasedHandler[F]]
+      handlersRef.get.flatMap { existing =>
+        if (existing.contains(id))
+          monad.error(new IllegalArgumentException(s"Button '$name' is already registered"))
+        else
+          handlersRef.update(_ + (id -> erased)).as(id)
+      }
+    }
   }
 
   override def registerCommand[T: {CommandParser as parser}](name: String, description: String = "", usageHint: String = "")(
@@ -80,16 +88,25 @@ private[slack] class SlackGatewayImpl[F[_]](
   }
 
   override def registerForm[T: {FormDef as fd}, M: {MetadataCodec as mc}](
-      handler: FormSubmission[T, M] => F[Unit],
-  ): F[FormId[T, M]] = {
-    val id    = FormId[T, M](UUID.randomUUID().toString)
-    val entry = FormEntry[F](
-      formDef = fd.asInstanceOf[FormDef[Any]],
-      handler = handler.asInstanceOf[FormSubmission[Any, Any] => F[Unit]],
-      encodeMetadata = (v: Any) => mc.encode(v.asInstanceOf[M]),
-      decodeMetadata = (raw: String) => mc.decode(raw),
-    )
-    formHandlersRef.update(_ + (id -> entry)).as(id)
+      name: String,
+  )(handler: FormSubmission[T, M] => F[Unit]): F[FormId[T, M]] = {
+    if (name.trim.isEmpty)
+      monad.error(new IllegalArgumentException("Form name must be non-empty"))
+    else {
+      val id    = FormId[T, M](name)
+      val entry = FormEntry[F](
+        formDef = fd.asInstanceOf[FormDef[Any]],
+        handler = handler.asInstanceOf[FormSubmission[Any, Any] => F[Unit]],
+        encodeMetadata = (v: Any) => mc.encode(v.asInstanceOf[M]),
+        decodeMetadata = (raw: String) => mc.decode(raw),
+      )
+      formHandlersRef.get.flatMap { existing =>
+        if (existing.contains(id))
+          monad.error(new IllegalArgumentException(s"Form '$name' is already registered"))
+        else
+          formHandlersRef.update(_ + (id -> entry)).as(id)
+      }
+    }
   }
 
   override def manifest(appName: String): F[SlackAppManifest] = {
@@ -172,44 +189,35 @@ private[slack] class SlackGatewayImpl[F[_]](
   }
 
   override def send(channel: String, text: String, buttons: Seq[Button], idempotencyKey: Option[IdempotencyKey]): F[MessageId] =
-    idempotencyKey match {
-      case None      => withClient(_.postMessage(channel, text, buildBlocks(text, buttons), threadTs = None))
-      case Some(key) =>
-        for {
-          check    <- idempotencyRef.get
-          existing <- check.findExisting(channel, threadTs = None, key)
-          result   <- existing match {
-                        case Some(found) => monad.unit(found)
-                        case None        =>
-                          val metadata = Some(IdempotencyCheck.buildMetadataJson(key))
-                          for {
-                            msgId <- withClient(_.postMessage(channel, text, buildBlocks(text, buttons), threadTs = None, metadata = metadata))
-                            _     <- check.recordSent(key, msgId)
-                          } yield msgId
-                      }
-        } yield result
-    }
+    withClient(client => doSend(client, channel, threadTs = None, text, buttons, idempotencyKey))
 
   override def reply(to: MessageId, text: String, buttons: Seq[Button], idempotencyKey: Option[IdempotencyKey]): F[MessageId] =
+    withClient(client => doSend(client, to.channel.value, threadTs = Some(to.ts), text, buttons, idempotencyKey))
+
+  private def doSend(
+      client: SlackClient[F],
+      channel: String,
+      threadTs: Option[chatops4s.slack.api.Timestamp],
+      text: String,
+      buttons: Seq[Button],
+      idempotencyKey: Option[IdempotencyKey],
+  ): F[MessageId] = {
+    val blocks = buildBlocks(text, buttons)
     idempotencyKey match {
-      case None      => withClient(_.postMessage(to.channel.value, text, buildBlocks(text, buttons), threadTs = Some(to.ts)))
+      case None      => client.postMessage(channel, text, blocks, threadTs)
       case Some(key) =>
-        for {
-          check    <- idempotencyRef.get
-          existing <- check.findExisting(to.channel.value, threadTs = Some(to.ts), key)
-          result   <- existing match {
-                        case Some(found) => monad.unit(found)
-                        case None        =>
-                          val metadata = Some(IdempotencyCheck.buildMetadataJson(key))
-                          for {
-                            msgId <- withClient(
-                                       _.postMessage(to.channel.value, text, buildBlocks(text, buttons), threadTs = Some(to.ts), metadata = metadata),
-                                     )
-                            _     <- check.recordSent(key, msgId)
-                          } yield msgId
-                      }
-        } yield result
+        idempotencyRef.get.flatMap { check =>
+          check.findExisting(client, channel, threadTs, key).flatMap {
+            case Some(found) => monad.unit(found)
+            case None        =>
+              val metadata = Some(IdempotencyCheck.buildMetadataJson(key))
+              client.postMessage(channel, text, blocks, threadTs, metadata = metadata).flatMap { msgId =>
+                check.recordSent(key, msgId).map(_ => msgId)
+              }
+          }
+        }
     }
+  }
 
   override def update(messageId: MessageId, text: String, buttons: Seq[Button]): F[MessageId] =
     withClient(_.updateMessage(messageId, text, buildBlocks(text, buttons)))

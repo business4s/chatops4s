@@ -37,6 +37,30 @@ class SlackApiDeserializationTest extends AnyFreeSpec with Matchers {
     }
   }
 
+  "Request encoding sanity" - {
+    "chat.UpdateRequest encodes channel/ts as plain strings" in {
+      val req  = chat.UpdateRequest(channel = ChannelId("C123"), ts = Timestamp("1.2"), text = Some("hi"))
+      val json = req.asJson.deepDropNullValues
+      info(json.noSpaces)
+      json.hcursor.get[String]("channel").toOption shouldBe Some("C123")
+      json.hcursor.get[String]("ts").toOption shouldBe Some("1.2")
+    }
+    "chat.DeleteRequest encodes channel/ts as plain strings" in {
+      val req  = chat.DeleteRequest(channel = ChannelId("C123"), ts = Timestamp("1.2"))
+      val json = req.asJson.deepDropNullValues
+      info(json.noSpaces)
+      json.hcursor.get[String]("channel").toOption shouldBe Some("C123")
+      json.hcursor.get[String]("ts").toOption shouldBe Some("1.2")
+    }
+    "conversations.RepliesRequest encodes channel/ts as plain strings" in {
+      val req  = conversations.RepliesRequest(channel = ChannelId("C123"), ts = Timestamp("1.2"), limit = Some(10))
+      val json = req.asJson.deepDropNullValues
+      info(json.noSpaces)
+      json.hcursor.get[String]("channel").toOption shouldBe Some("C123")
+      json.hcursor.get[String]("ts").toOption shouldBe Some("1.2")
+    }
+  }
+
   "Deserialization of real Slack responses" - {
 
     "chat.postMessage" in {
@@ -92,11 +116,11 @@ class SlackApiDeserializationTest extends AnyFreeSpec with Matchers {
       assume(json.isDefined, "Fixture error.json not found — run ResponseCollector first")
       val result = decode[SlackResponse[chat.DeleteResponse]](json.get)
       result match {
-        case Right(SlackResponse.Err(error, _, _)) =>
+        case Right(SlackResponse.Err(_, error, _, _)) =>
           error should not be empty
-        case Right(SlackResponse.Ok(_))            =>
+        case Right(SlackResponse.Ok(_))               =>
           fail("Expected Err but got Ok")
-        case Left(err)                             =>
+        case Left(err)                                =>
           fail(s"Failed to decode: $err")
       }
     }

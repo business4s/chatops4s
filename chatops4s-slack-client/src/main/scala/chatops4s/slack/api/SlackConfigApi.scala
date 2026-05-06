@@ -48,8 +48,8 @@ class SlackConfigApi[F[_]](backend: Backend[F], token: SlackConfigToken) {
       )
       .map(_.body)
       .map {
-        case Right(res) => res
-        case Left(err)  => throw SlackApiError("deserialization_error", List(s"$method: $err"))
+        case Right(res) => SlackResponse.withMethod(method, res)
+        case Left(err)  => throw SlackApiError(method, "deserialization_error", List(err.toString))
       }
 
   /** Slack requires the `manifest` field to be "a JSON app manifest encoded as a string", not a nested JSON object.

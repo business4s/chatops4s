@@ -7,7 +7,7 @@ private object ButtonsPage {
 
   // start_register_button
   def registerButton(slack: SlackGateway[IO] & SlackSetup[IO]): IO[ButtonId[String]] =
-    slack.registerButton[String] { click =>
+    slack.registerButton[String]("approve") { click =>
       slack.update(click.messageId, s"Approved by ${click.userId.mention}").void
     }
   // end_register_button
@@ -42,7 +42,7 @@ private object ButtonsPage {
   // start_constrained_usage
   def constrainedButtons(slack: SlackGateway[IO] & SlackSetup[IO], channel: String): IO[Unit] =
     for {
-      deployBtn <- slack.registerButton[Environment] { click =>
+      deployBtn <- slack.registerButton[Environment]("deploy-env") { click =>
                      // click.value is guaranteed to be a valid Environment
                      slack.update(click.messageId, s"Deploying to ${click.value}...").void
                    }
@@ -59,7 +59,7 @@ private object ButtonsPage {
 
   // start_remove_buttons
   def removeButtons(slack: SlackGateway[IO] & SlackSetup[IO]): IO[ButtonId[String]] =
-    slack.registerButton[String] { click =>
+    slack.registerButton[String]("approve-and-remove") { click =>
       // update replaces the message, removing buttons
       slack.update(click.messageId, s"Approved by ${click.userId.mention}").void
     }

@@ -39,7 +39,7 @@ object SlackGateway {
       formHandlersRef    <- Ref.of[F, Map[FormId[?, ?], FormEntry[F]]](Map.empty)
       defaultCache       <- UserInfoCache.inMemory[F]()
       cacheRef           <- Ref.of[F, UserInfoCache[F]](defaultCache)
-      defaultCheck        = IdempotencyCheck.slackScan[F](clientRef)
+      defaultCheck       <- IdempotencyCheck.slackScan[F]()
       idempotencyRef     <- Ref.of[F, IdempotencyCheck[F]](defaultCheck)
       errorHandlerRef    <- Ref.of[F, Throwable => F[Unit]](defaultErrorHandler)
     } yield {

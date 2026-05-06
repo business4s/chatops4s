@@ -13,7 +13,7 @@ private object FormsPage {
   def formOperations(slack: SlackGateway[IO] & SlackSetup[IO], channel: String): IO[Unit] =
     for {
       // start_form_open
-      deployForm <- slack.registerForm[DeployForm, String] { submission =>
+      deployForm <- slack.registerForm[DeployForm, String]("deploy-form") { submission =>
                       val form = submission.values
                       slack.send(channel, s"Deploying ${form.service} ${form.version}").void
                     }
@@ -46,7 +46,7 @@ private object FormsPage {
       channel: String,
   ): IO[Unit] = {
     for {
-      deployForm <- slack.registerForm[DeployForm, String] { submission =>
+      deployForm <- slack.registerForm[DeployForm, String]("deploy-form") { submission =>
                       val meta = submission.metadata // your metadata string
                       val form = submission.values
                       slack.send(channel, s"[$meta] Deploying ${form.service}").void
