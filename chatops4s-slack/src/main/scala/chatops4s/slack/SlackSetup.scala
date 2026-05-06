@@ -5,8 +5,8 @@ import chatops4s.slack.api.manifest.SlackAppManifest
 
 trait SlackSetup[F[_]] {
 
-  /** `name` becomes the Slack `action_id` -- pick a stable, app-unique value so previously-posted
-    * buttons keep working after a restart. Registering the same name twice fails.
+  /** `name` becomes the Slack `action_id` -- pick a stable, app-unique value so previously-posted buttons keep working after a restart. Registering
+    * the same name twice fails.
     */
   def registerButton[T <: String](name: String)(handler: ButtonClick[T] => F[Unit]): F[ButtonId[T]]
 
@@ -15,8 +15,8 @@ trait SlackSetup[F[_]] {
       handler: Command[T] => F[CommandResponse],
   ): F[Unit]
 
-  /** `name` becomes the Slack `callback_id` -- pick a stable, app-unique value so submissions of
-    * previously-opened forms keep dispatching after a restart. Registering the same name twice fails.
+  /** `name` becomes the Slack `callback_id` -- pick a stable, app-unique value so submissions of previously-opened forms keep dispatching after a
+    * restart. Registering the same name twice fails.
     */
   def registerForm[T: FormDef, M: MetadataCodec](name: String)(handler: FormSubmission[T, M] => F[Unit]): F[FormId[T, M]]
 

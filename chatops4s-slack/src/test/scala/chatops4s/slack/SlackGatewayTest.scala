@@ -1012,7 +1012,7 @@ class SlackGatewayTest extends AnyFreeSpec with Matchers {
 
         val gateway = createGateway(backend)
         gateway.send("C123", "Hi", idempotencyKey = Some(IdempotencyKey("my-key"))).unsafeRunSync()
-        val r2 = gateway.send("C123", "Hi", idempotencyKey = Some(IdempotencyKey("my-key"))).unsafeRunSync()
+        val r2      = gateway.send("C123", "Hi", idempotencyKey = Some(IdempotencyKey("my-key"))).unsafeRunSync()
 
         // First call: history scan (empty) + post. Second call: served from L1, no history, no post.
         historyCallCount shouldBe 1
