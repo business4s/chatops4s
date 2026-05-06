@@ -17,9 +17,9 @@ object Deployment extends IOApp.Simple {
     HttpClientFs2Backend.resource[IO]().use { backend =>
       for {
         slack      <- SlackGateway.create(backend)
-        approveBtn <- slack.registerButton[ServiceVersion](onApprove(slack))
-        rejectBtn  <- slack.registerButton[ServiceVersion](onReject(slack))
-        deployForm <- slack.registerForm[DeployForm, String](onDeploySubmit(slack, approveBtn, rejectBtn))
+        approveBtn <- slack.registerButton[ServiceVersion]("approve-deploy")(onApprove(slack))
+        rejectBtn  <- slack.registerButton[ServiceVersion]("reject-deploy")(onReject(slack))
+        deployForm <- slack.registerForm[DeployForm, String]("deploy-form")(onDeploySubmit(slack, approveBtn, rejectBtn))
         // /deploy [service] → opens a form, pre-populating service name if provided
         _          <- slack.registerCommand[String]("deploy", "Deploy a service") { cmd =>
                         val initial = {

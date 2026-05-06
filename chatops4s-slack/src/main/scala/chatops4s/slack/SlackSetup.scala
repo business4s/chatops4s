@@ -5,15 +5,20 @@ import chatops4s.slack.api.manifest.SlackAppManifest
 
 trait SlackSetup[F[_]] {
 
-  /** Handlers accumulate by design -- registered once at startup. */
-  def registerButton[T <: String](handler: ButtonClick[T] => F[Unit]): F[ButtonId[T]]
+  /** `name` becomes the Slack `action_id` -- pick a stable, app-unique value so previously-posted
+    * buttons keep working after a restart. Registering the same name twice fails.
+    */
+  def registerButton[T <: String](name: String)(handler: ButtonClick[T] => F[Unit]): F[ButtonId[T]]
 
   /** Parse failures are returned as ephemeral error messages to the user. */
   def registerCommand[T: CommandParser](name: String, description: String = "", usageHint: String = "")(
       handler: Command[T] => F[CommandResponse],
   ): F[Unit]
 
-  def registerForm[T: FormDef, M: MetadataCodec](handler: FormSubmission[T, M] => F[Unit]): F[FormId[T, M]]
+  /** `name` becomes the Slack `callback_id` -- pick a stable, app-unique value so submissions of
+    * previously-opened forms keep dispatching after a restart. Registering the same name twice fails.
+    */
+  def registerForm[T: FormDef, M: MetadataCodec](name: String)(handler: FormSubmission[T, M] => F[Unit]): F[FormId[T, M]]
 
   def manifest(appName: String): F[SlackAppManifest]
   def checkSetup(appName: String, manifestPath: String, modifier: SlackAppManifest => SlackAppManifest = identity): F[SetupVerification]

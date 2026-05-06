@@ -11,7 +11,6 @@ import sttp.monad.syntax.*
 import chatops4s.slack.monadSyntax.*
 
 import java.nio.file.Paths
-import java.util.UUID
 
 private[slack] type ErasedHandler[F[_]]        = ButtonClick[String] => F[Unit]
 private[slack] type ErasedCommandHandler[F[_]] = SlashCommandPayload => F[CommandResponse]
@@ -53,10 +52,19 @@ private[slack] class SlackGatewayImpl[F[_]](
 
   // TODO: Handlers accumulate indefinitely by design. Buttons/commands/forms are registered once
   // at startup and reused. If dynamic registration is needed in the future, add TTL or unregister methods.
-  override def registerButton[T <: String](handler: ButtonClick[T] => F[Unit]): F[ButtonId[T]] = {
-    val id     = ButtonId[T](UUID.randomUUID().toString)
-    val erased = handler.asInstanceOf[ErasedHandler[F]]
-    handlersRef.update(_ + (id -> erased)).as(id)
+  override def registerButton[T <: String](name: String)(handler: ButtonClick[T] => F[Unit]): F[ButtonId[T]] = {
+    if (name.trim.isEmpty)
+      monad.error(new IllegalArgumentException("Button name must be non-empty"))
+    else {
+      val id     = ButtonId[T](name)
+      val erased = handler.asInstanceOf[ErasedHandler[F]]
+      handlersRef.get.flatMap { existing =>
+        if (existing.contains(id))
+          monad.error(new IllegalArgumentException(s"Button '$name' is already registered"))
+        else
+          handlersRef.update(_ + (id -> erased)).as(id)
+      }
+    }
   }
 
   override def registerCommand[T: {CommandParser as parser}](name: String, description: String = "", usageHint: String = "")(
@@ -80,16 +88,25 @@ private[slack] class SlackGatewayImpl[F[_]](
   }
 
   override def registerForm[T: {FormDef as fd}, M: {MetadataCodec as mc}](
-      handler: FormSubmission[T, M] => F[Unit],
-  ): F[FormId[T, M]] = {
-    val id    = FormId[T, M](UUID.randomUUID().toString)
-    val entry = FormEntry[F](
-      formDef = fd.asInstanceOf[FormDef[Any]],
-      handler = handler.asInstanceOf[FormSubmission[Any, Any] => F[Unit]],
-      encodeMetadata = (v: Any) => mc.encode(v.asInstanceOf[M]),
-      decodeMetadata = (raw: String) => mc.decode(raw),
-    )
-    formHandlersRef.update(_ + (id -> entry)).as(id)
+      name: String,
+  )(handler: FormSubmission[T, M] => F[Unit]): F[FormId[T, M]] = {
+    if (name.trim.isEmpty)
+      monad.error(new IllegalArgumentException("Form name must be non-empty"))
+    else {
+      val id    = FormId[T, M](name)
+      val entry = FormEntry[F](
+        formDef = fd.asInstanceOf[FormDef[Any]],
+        handler = handler.asInstanceOf[FormSubmission[Any, Any] => F[Unit]],
+        encodeMetadata = (v: Any) => mc.encode(v.asInstanceOf[M]),
+        decodeMetadata = (raw: String) => mc.decode(raw),
+      )
+      formHandlersRef.get.flatMap { existing =>
+        if (existing.contains(id))
+          monad.error(new IllegalArgumentException(s"Form '$name' is already registered"))
+        else
+          formHandlersRef.update(_ + (id -> entry)).as(id)
+      }
+    }
   }
 
   override def manifest(appName: String): F[SlackAppManifest] = {

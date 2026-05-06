@@ -50,10 +50,10 @@ object InteractiveButtons extends IOApp.Simple {
     HttpClientFs2Backend.resource[IO]().use { backend =>
       for {
         slack      <- SlackGateway.create(backend)
-        approveBtn <- slack.registerButton[String] { click =>
+        approveBtn <- slack.registerButton[String]("approve") { click =>
                         slack.update(click.messageId, s"Approved by ${click.userId.mention}").void
                       }
-        rejectBtn  <- slack.registerButton[String] { click =>
+        rejectBtn  <- slack.registerButton[String]("reject") { click =>
                         slack.update(click.messageId, s"Rejected by ${click.userId.mention}").void
                       }
         _          <- slack.registerCommand[String]("deploy", "Deploy to production") { _ =>
@@ -90,7 +90,7 @@ object InteractiveForms extends IOApp.Simple {
       for {
         slack      <- SlackGateway.create(backend)
         // start_form_register
-        deployForm <- slack.registerForm[DeployForm, String] { submission =>
+        deployForm <- slack.registerForm[DeployForm, String]("deploy-form") { submission =>
                         val form = submission.values
                         slack.send(channel, s"Deploying ${form.service} ${form.version}").void
                       }
@@ -119,10 +119,10 @@ private object HeroSnippet {
     // start_hero
     for {
       slack      <- SlackGateway.create(backend)
-      approveBtn <- slack.registerButton[String] { click =>
+      approveBtn <- slack.registerButton[String]("approve") { click =>
                       slack.update(click.messageId, s"Approved by ${click.userId.mention}").void
                     }
-      rejectBtn  <- slack.registerButton[String] { click =>
+      rejectBtn  <- slack.registerButton[String]("reject") { click =>
                       slack.update(click.messageId, s"Rejected by ${click.userId.mention}").void
                     }
       _          <- slack.registerCommand[String]("deploy", "Deploy to production") { _ =>

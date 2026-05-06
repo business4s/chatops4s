@@ -40,13 +40,31 @@ object IdempotencyCheck {
       new InMemoryIdempotencyCheck[F](ref, ttl, maxEntries, clock)
     }
 
-  // TODO: slackScan fetches up to 100 messages per check. For high-volume channels,
-  // prefer IdempotencyCheck.inMemory.
+  // slackScan is the durable default: it works across restarts and replicas because Slack message
+  // metadata is the source of truth. To avoid repeatedly hitting Tier 2/3 rate limits, an in-process
+  // L1 cache short-circuits subsequent checks for keys this process already saw (either via
+  // `recordSent` or via a positive scan result). Negative results are *never* cached -- another
+  // replica may have sent the message after our scan. Channel-name -> ChannelId resolution is also
+  // cached for the lifetime of the process (renames preserve the ChannelId).
   private[slack] def slackScan[F[_]](
       clientRef: Ref[F, Option[SlackClient[F]]],
       scanLimit: Int = 100,
-  )(using monad: MonadError[F]): IdempotencyCheck[F] =
-    new SlackScanIdempotencyCheck[F](clientRef, scanLimit)
+      ttl: Duration = Duration.ofHours(1),
+      maxEntries: Int = 1000,
+  )(using monad: MonadError[F]): F[IdempotencyCheck[F]] =
+    slackScanWithClock(clientRef, scanLimit, ttl, maxEntries, () => Instant.now())
+
+  private[slack] def slackScanWithClock[F[_]](
+      clientRef: Ref[F, Option[SlackClient[F]]],
+      scanLimit: Int,
+      ttl: Duration,
+      maxEntries: Int,
+      clock: () => Instant,
+  )(using monad: MonadError[F]): F[IdempotencyCheck[F]] =
+    for {
+      keyCache       <- Ref.of[F, Map[(ChannelId, String), CacheEntry]](Map.empty)
+      channelIdCache <- Ref.of[F, Map[String, ChannelId]](Map.empty)
+    } yield new SlackScanIdempotencyCheck[F](clientRef, scanLimit, keyCache, channelIdCache, ttl, maxEntries, clock)
 
   private[slack] def buildMetadataJson(key: IdempotencyKey): Json =
     Json.obj(
@@ -103,6 +121,11 @@ object IdempotencyCheck {
   private class SlackScanIdempotencyCheck[F[_]](
       clientRef: Ref[F, Option[SlackClient[F]]],
       scanLimit: Int,
+      keyCache: Ref[F, Map[(ChannelId, String), CacheEntry]],
+      channelIdCache: Ref[F, Map[String, ChannelId]],
+      ttl: Duration,
+      maxEntries: Int,
+      clock: () => Instant,
   )(using monad: MonadError[F])
       extends IdempotencyCheck[F] {
 
@@ -123,27 +146,75 @@ object IdempotencyCheck {
           resolveChannelId(client, channel).flatMap {
             case None            => monad.unit(None)
             case Some(channelId) =>
-              val messagesF = threadTs match {
-                case Some(ts) => client.fetchThreadReplies(channelId, ts, scanLimit)
-                case None     => client.fetchRecentMessages(channelId, scanLimit)
-              }
-              messagesF.map { messages =>
-                messages.collectFirst {
-                  case msg if msg.ts.isDefined && msg.metadata.exists(m => extractKeyFromMetadata(m).contains(key.value)) =>
-                    MessageId(channelId, msg.ts.get)
-                }
+              checkLocal(channelId, key).flatMap {
+                case Some(found) => monad.unit(Some(found))
+                case None        =>
+                  scanSlack(client, channelId, threadTs, key).flatMap {
+                    case Some(found) => storeLocal(channelId, key.value, found).map(_ => Some(found))
+                    case None        => monad.unit(None)
+                  }
               }
           }
       }
 
+    def recordSent(key: IdempotencyKey, messageId: MessageId): F[Unit] =
+      storeLocal(messageId.channel, key.value, messageId)
+
+    private def checkLocal(channelId: ChannelId, key: IdempotencyKey): F[Option[MessageId]] =
+      keyCache.get.map { entries =>
+        val now = clock()
+        entries.get((channelId, key.value)).collect {
+          case e if !isExpired(e, now) => e.messageId
+        }
+      }
+
+    private def storeLocal(channelId: ChannelId, key: String, messageId: MessageId): F[Unit] = {
+      val now = clock()
+      keyCache.update { entries =>
+        val withNew = entries + ((channelId, key) -> CacheEntry(messageId, now))
+        val swept   = withNew.filter { case (_, e) => !isExpired(e, now) }
+        if (swept.size > maxEntries)
+          swept.toList.sortBy(_._2.insertedAt).drop(swept.size - maxEntries).toMap
+        else swept
+      }
+    }
+
+    private def isExpired(entry: CacheEntry, now: Instant): Boolean =
+      Duration.between(entry.insertedAt, now).compareTo(ttl) > 0
+
+    private def scanSlack(
+        client: SlackClient[F],
+        channelId: ChannelId,
+        threadTs: Option[Timestamp],
+        key: IdempotencyKey,
+    ): F[Option[MessageId]] = {
+      val messagesF = threadTs match {
+        case Some(ts) => client.fetchThreadReplies(channelId, ts, scanLimit)
+        case None     => client.fetchRecentMessages(channelId, scanLimit)
+      }
+      messagesF.map { messages =>
+        messages.collectFirst {
+          case msg if msg.ts.isDefined && msg.metadata.exists(m => extractKeyFromMetadata(m).contains(key.value)) =>
+            MessageId(channelId, msg.ts.get)
+        }
+      }
+    }
+
     private def resolveChannelId(client: SlackClient[F], channel: String): F[Option[ChannelId]] =
       if (looksLikeChannelId(channel)) monad.unit(Some(ChannelId(channel)))
-      else client.findChannelIdByName(channel)
+      else
+        channelIdCache.get.flatMap { cached =>
+          cached.get(channel) match {
+            case Some(id) => monad.unit(Some(id))
+            case None     =>
+              client.findChannelIdByName(channel).flatMap {
+                case Some(id) => channelIdCache.update(_ + (channel -> id)).map(_ => Some(id))
+                case None     => monad.unit(None)
+              }
+          }
+        }
 
     private def looksLikeChannelId(s: String): Boolean =
       s.nonEmpty && (s.head == 'C' || s.head == 'G' || s.head == 'D') && s.forall(c => c.isUpper || c.isDigit)
-
-    def recordSent(key: IdempotencyKey, messageId: MessageId): F[Unit] =
-      monad.unit(())
   }
 }

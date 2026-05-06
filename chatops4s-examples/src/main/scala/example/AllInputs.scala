@@ -18,11 +18,11 @@ object AllInputs extends IOApp.Simple {
     HttpClientFs2Backend.resource[IO]().use { backend =>
       for {
         slack        <- SlackGateway.create(backend)
-        form         <- slack.registerForm[AllInputsForm, Option[MessageId]](onSubmit(slack))
-        openBtn      <- slack.registerButton[String] { click =>
+        form         <- slack.registerForm[AllInputsForm, Option[MessageId]]("all-inputs-form")(onSubmit(slack))
+        openBtn      <- slack.registerButton[String]("open-all-inputs") { click =>
                           slack.openForm(click.triggerId, form, "All Inputs", Some(click.messageId))
                         }
-        prefilledBtn <- slack.registerButton[String](openPrefilled(slack, form, _))
+        prefilledBtn <- slack.registerButton[String]("open-all-inputs-prefilled")(openPrefilled(slack, form, _))
         _            <- slack.registerCommand[String]("all-inputs", "Open all-inputs form") { cmd =>
                           slack.openForm(cmd.triggerId, form, "All Inputs", None).as(CommandResponse.Silent)
                         }
