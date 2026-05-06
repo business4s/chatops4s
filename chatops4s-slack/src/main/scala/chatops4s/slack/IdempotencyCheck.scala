@@ -8,8 +8,6 @@ import sttp.monad.syntax.*
 import java.time.{Duration, Instant}
 
 trait IdempotencyCheck[F[_]] {
-  // The gateway hands its connected client to each call. Implementations that don't need it
-  // (in-memory caches, no-ops) can ignore the parameter.
   def findExisting(client: SlackClient[F], channel: String, threadTs: Option[Timestamp], key: IdempotencyKey): F[Option[MessageId]]
   def recordSent(key: IdempotencyKey, messageId: MessageId): F[Unit]
   def requiredBotScopes: Set[String] = Set.empty
@@ -54,9 +52,7 @@ object IdempotencyCheck {
       maxEntries: Int,
       clock: () => Instant,
   )(using monad: MonadError[F]): F[IdempotencyCheck[F]] =
-    Ref.of[F, Map[IdempotencyKey, CacheEntry]](Map.empty).map { ref =>
-      new InMemoryIdempotencyCheck[F](ref, ttl, maxEntries, clock)
-    }
+    TtlCache.of[F, IdempotencyKey](ttl, maxEntries, clock).map(new InMemoryIdempotencyCheck[F](_))
 
   // slackScan is the durable default: it works across restarts and replicas because Slack message
   // metadata is the source of truth. To avoid repeatedly hitting Tier 2/3 rate limits, an in-process
@@ -74,9 +70,9 @@ object IdempotencyCheck {
       clock: () => Instant,
   )(using monad: MonadError[F]): F[IdempotencyCheck[F]] =
     for {
-      keyCache       <- Ref.of[F, Map[(ChannelId, String), CacheEntry]](Map.empty)
+      keyCache       <- TtlCache.of[F, (ChannelId, String)](settings.ttl, settings.maxEntries, clock)
       channelIdCache <- Ref.of[F, Map[String, ChannelId]](Map.empty)
-    } yield new SlackScanIdempotencyCheck[F](settings, keyCache, channelIdCache, clock)
+    } yield new SlackScanIdempotencyCheck[F](settings, keyCache, channelIdCache)
 
   private[slack] def buildMetadataJson(key: IdempotencyKey): Json =
     Json.obj(
@@ -97,44 +93,52 @@ object IdempotencyCheck {
 
   private case class CacheEntry(messageId: MessageId, insertedAt: Instant)
 
-  private class InMemoryIdempotencyCheck[F[_]](
-      ref: Ref[F, Map[IdempotencyKey, CacheEntry]],
+  // Bounded TTL map: writes sweep expired entries and cap total size to maxEntries.
+  private class TtlCache[F[_], K](
+      ref: Ref[F, Map[K, CacheEntry]],
       ttl: Duration,
       maxEntries: Int,
       clock: () => Instant,
-  )(using monad: MonadError[F])
-      extends IdempotencyCheck[F] {
+  )(using monad: MonadError[F]) {
 
-    def findExisting(client: SlackClient[F], channel: String, threadTs: Option[Timestamp], key: IdempotencyKey): F[Option[MessageId]] =
+    def get(key: K): F[Option[MessageId]] =
       ref.get.map { entries =>
-        entries.get(key).collect {
-          case entry if !isExpired(entry) => entry.messageId
-        }
+        val now = clock()
+        entries.get(key).collect { case e if !isExpired(e, now) => e.messageId }
       }
 
-    def recordSent(key: IdempotencyKey, messageId: MessageId): F[Unit] = {
+    def put(key: K, messageId: MessageId): F[Unit] = {
       val now = clock()
       ref.update { entries =>
         val withNew = entries + (key -> CacheEntry(messageId, now))
-        val swept   = withNew.filter { case (_, entry) => !isExpired(entry, now) }
-        if (swept.size > maxEntries) {
-          swept.toList.sortBy(_._2.insertedAt).drop(swept.size - maxEntries).toMap
-        } else swept
+        val swept   = withNew.filter { case (_, e) => !isExpired(e, now) }
+        if (swept.size > maxEntries) swept.toList.sortBy(_._2.insertedAt).drop(swept.size - maxEntries).toMap
+        else swept
       }
     }
-
-    private def isExpired(entry: CacheEntry): Boolean =
-      isExpired(entry, clock())
 
     private def isExpired(entry: CacheEntry, now: Instant): Boolean =
       Duration.between(entry.insertedAt, now).compareTo(ttl) > 0
   }
 
+  private object TtlCache {
+    def of[F[_], K](ttl: Duration, maxEntries: Int, clock: () => Instant)(using monad: MonadError[F]): F[TtlCache[F, K]] =
+      Ref.of[F, Map[K, CacheEntry]](Map.empty).map(new TtlCache[F, K](_, ttl, maxEntries, clock))
+  }
+
+  private class InMemoryIdempotencyCheck[F[_]](cache: TtlCache[F, IdempotencyKey]) extends IdempotencyCheck[F] {
+
+    def findExisting(client: SlackClient[F], channel: String, threadTs: Option[Timestamp], key: IdempotencyKey): F[Option[MessageId]] =
+      cache.get(key)
+
+    def recordSent(key: IdempotencyKey, messageId: MessageId): F[Unit] =
+      cache.put(key, messageId)
+  }
+
   private class SlackScanIdempotencyCheck[F[_]](
       settings: SlackScanSettings,
-      keyCache: Ref[F, Map[(ChannelId, String), CacheEntry]],
+      keyCache: TtlCache[F, (ChannelId, String)],
       channelIdCache: Ref[F, Map[String, ChannelId]],
-      clock: () => Instant,
   )(using monad: MonadError[F])
       extends IdempotencyCheck[F] {
 
@@ -151,40 +155,18 @@ object IdempotencyCheck {
       resolveChannelId(client, channel).flatMap {
         case None            => monad.unit(None)
         case Some(channelId) =>
-          checkLocal(channelId, key).flatMap {
+          keyCache.get((channelId, key.value)).flatMap {
             case Some(found) => monad.unit(Some(found))
             case None        =>
               scanSlack(client, channelId, threadTs, key).flatMap {
-                case Some(found) => storeLocal(channelId, key.value, found).map(_ => Some(found))
+                case Some(found) => keyCache.put((channelId, key.value), found).map(_ => Some(found))
                 case None        => monad.unit(None)
               }
           }
       }
 
     def recordSent(key: IdempotencyKey, messageId: MessageId): F[Unit] =
-      storeLocal(messageId.channel, key.value, messageId)
-
-    private def checkLocal(channelId: ChannelId, key: IdempotencyKey): F[Option[MessageId]] =
-      keyCache.get.map { entries =>
-        val now = clock()
-        entries.get((channelId, key.value)).collect {
-          case e if !isExpired(e, now) => e.messageId
-        }
-      }
-
-    private def storeLocal(channelId: ChannelId, key: String, messageId: MessageId): F[Unit] = {
-      val now = clock()
-      keyCache.update { entries =>
-        val withNew = entries + ((channelId, key) -> CacheEntry(messageId, now))
-        val swept   = withNew.filter { case (_, e) => !isExpired(e, now) }
-        if (swept.size > settings.maxEntries)
-          swept.toList.sortBy(_._2.insertedAt).drop(swept.size - settings.maxEntries).toMap
-        else swept
-      }
-    }
-
-    private def isExpired(entry: CacheEntry, now: Instant): Boolean =
-      Duration.between(entry.insertedAt, now).compareTo(settings.ttl) > 0
+      keyCache.put((messageId.channel, key.value), messageId)
 
     private def scanSlack(
         client: SlackClient[F],
@@ -205,17 +187,20 @@ object IdempotencyCheck {
     }
 
     private def resolveChannelId(client: SlackClient[F], channel: String): F[Option[ChannelId]] =
-      if (looksLikeChannelId(channel)) monad.unit(Some(ChannelId(channel)))
+      if (ChannelId.looksLikeId(channel)) monad.unit(Some(ChannelId(channel)))
       else {
         val needle = channel.stripPrefix("#")
-        channelIdCache.get.flatMap { cached =>
-          cached.get(needle).fold(client.listChannels(settings.channelLookup).flatMap(consumePages(_, needle)))(id => monad.unit(Some(id)))
+        channelIdCache.get.flatMap {
+          _.get(needle) match {
+            case Some(id) => monad.unit(Some(id))
+            case None     => client.listChannels(settings.channelLookup).flatMap(consumePages(_, needle))
+          }
         }
       }
 
     // Slack ignores `exclude_archived` for some workspaces and still returns archived channels, so
-    // we filter client-side. Every non-archived channel we observe is cached -- the cost was already
-    // paid for the page.
+    // we filter client-side. Every non-archived channel we observe is cached -- the API call was
+    // already paid for, and Tier 2/3 list endpoints are far more expensive than the memory used.
     private def consumePages(page: ConversationsPage[F], needle: String): F[Option[ChannelId]] = {
       val active = page.channels.filterNot(_.is_archived.contains(true))
       cachePage(active).flatMap { _ =>
@@ -231,8 +216,5 @@ object IdempotencyCheck {
       if (pairs.isEmpty) monad.unit(())
       else channelIdCache.update(_ ++ pairs)
     }
-
-    private def looksLikeChannelId(s: String): Boolean =
-      s.nonEmpty && (s.head == 'C' || s.head == 'G' || s.head == 'D') && s.forall(c => c.isUpper || c.isDigit)
   }
 }

@@ -64,6 +64,9 @@ object ChannelId {
   def apply(value: String): ChannelId          = value
   extension (x: ChannelId) def value: String   = x
   extension (x: ChannelId) def mention: String = s"<#$x>"
+  // C = public, G = legacy private/group, D = DM. Slack guarantees uppercase + digits.
+  def looksLikeId(s: String): Boolean          =
+    s.nonEmpty && (s.head == 'C' || s.head == 'G' || s.head == 'D') && s.forall(c => c.isUpper || c.isDigit)
   given Encoder[ChannelId]                     = Encoder[String]
   given Decoder[ChannelId]                     = Decoder[String]
 }
@@ -183,7 +186,7 @@ sealed trait SlackResponse[+T] {
 }
 
 object SlackResponse {
-  case class Ok[+T](value: T)                                     extends SlackResponse[T]       {
+  case class Ok[+T](value: T)                                                     extends SlackResponse[T]       {
     def okOrThrow: T = value
   }
   case class Err(method: String, error: String, details: List[String], raw: Json) extends SlackResponse[Nothing] {
@@ -207,7 +210,7 @@ object SlackResponse {
   }
 
   def withMethod[T](method: String, response: SlackResponse[T]): SlackResponse[T] = response match {
-    case e: Err   => e.copy(method = method)
+    case e: Err    => e.copy(method = method)
     case ok: Ok[T] => ok
   }
 }
