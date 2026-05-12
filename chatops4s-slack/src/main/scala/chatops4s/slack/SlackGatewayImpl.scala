@@ -188,11 +188,23 @@ private[slack] class SlackGatewayImpl[F[_]](
     } yield ()
   }
 
-  override def send(channel: String, text: String, buttons: Seq[Button], idempotencyKey: Option[IdempotencyKey]): F[MessageId] =
-    withClient(client => doSend(client, channel, threadTs = None, text, buttons, idempotencyKey))
+  override def send(
+      channel: String,
+      text: String,
+      buttons: Seq[Button],
+      blocks: Seq[Block],
+      idempotencyKey: Option[IdempotencyKey],
+  ): F[MessageId] =
+    withClient(client => doSend(client, channel, threadTs = None, text, buttons, blocks, idempotencyKey))
 
-  override def reply(to: MessageId, text: String, buttons: Seq[Button], idempotencyKey: Option[IdempotencyKey]): F[MessageId] =
-    withClient(client => doSend(client, to.channel.value, threadTs = Some(to.ts), text, buttons, idempotencyKey))
+  override def reply(
+      to: MessageId,
+      text: String,
+      buttons: Seq[Button],
+      blocks: Seq[Block],
+      idempotencyKey: Option[IdempotencyKey],
+  ): F[MessageId] =
+    withClient(client => doSend(client, to.channel.value, threadTs = Some(to.ts), text, buttons, blocks, idempotencyKey))
 
   private def doSend(
       client: SlackClient[F],
@@ -200,9 +212,10 @@ private[slack] class SlackGatewayImpl[F[_]](
       threadTs: Option[chatops4s.slack.api.Timestamp],
       text: String,
       buttons: Seq[Button],
+      extraBlocks: Seq[Block],
       idempotencyKey: Option[IdempotencyKey],
   ): F[MessageId] = {
-    val blocks = buildBlocks(text, buttons)
+    val blocks = buildBlocks(text, buttons, extraBlocks)
     idempotencyKey match {
       case None      => client.postMessage(channel, text, blocks, threadTs)
       case Some(key) =>
@@ -219,8 +232,8 @@ private[slack] class SlackGatewayImpl[F[_]](
     }
   }
 
-  override def update(messageId: MessageId, text: String, buttons: Seq[Button]): F[MessageId] =
-    withClient(_.updateMessage(messageId, text, buildBlocks(text, buttons)))
+  override def update(messageId: MessageId, text: String, buttons: Seq[Button], blocks: Seq[Block]): F[MessageId] =
+    withClient(_.updateMessage(messageId, text, buildBlocks(text, buttons, blocks)))
 
   override def delete(messageId: MessageId): F[Unit] =
     withClient(_.deleteMessage(messageId))
@@ -355,19 +368,15 @@ private[slack] class SlackGatewayImpl[F[_]](
     }
   }
 
-  private def buildBlocks(text: String, buttons: Seq[Button]): Option[List[Block]] =
-    if (buttons.nonEmpty) {
-      Some(
-        List(
-          SectionBlock(
-            text = Some(MarkdownTextObject(text = text)),
-          ),
-          ActionsBlock(
-            elements = buttons.map(buttonToElement).toList,
-          ),
-        ),
-      )
-    } else None
+  private def buildBlocks(text: String, buttons: Seq[Button], extraBlocks: Seq[Block]): Option[List[Block]] = {
+    val actions = if (buttons.nonEmpty) Some(ActionsBlock(elements = buttons.map(buttonToElement).toList)) else None
+    if (extraBlocks.nonEmpty) Some(extraBlocks.toList ++ actions.toList)
+    else
+      actions match {
+        case Some(a) => Some(List(SectionBlock(text = Some(MarkdownTextObject(text = text))), a))
+        case None    => None
+      }
+  }
 
   private def buttonToElement(button: Button): BlockElement =
     ButtonElement(

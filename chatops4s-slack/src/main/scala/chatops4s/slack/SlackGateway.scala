@@ -1,13 +1,26 @@
 package chatops4s.slack
 
 import chatops4s.slack.api.{TriggerId, UserId, users}
+import chatops4s.slack.api.blocks.Block
 import sttp.client4.WebSocketBackend
 import sttp.monad.syntax.*
 
 trait SlackGateway[F[_]] {
-  def send(channel: String, text: String, buttons: Seq[Button] = Seq.empty, idempotencyKey: Option[IdempotencyKey] = None): F[MessageId]
-  def reply(to: MessageId, text: String, buttons: Seq[Button] = Seq.empty, idempotencyKey: Option[IdempotencyKey] = None): F[MessageId]
-  def update(messageId: MessageId, text: String, buttons: Seq[Button] = Seq.empty): F[MessageId]
+  def send(
+      channel: String,
+      text: String,
+      buttons: Seq[Button] = Seq.empty,
+      blocks: Seq[Block] = Seq.empty,
+      idempotencyKey: Option[IdempotencyKey] = None,
+  ): F[MessageId]
+  def reply(
+      to: MessageId,
+      text: String,
+      buttons: Seq[Button] = Seq.empty,
+      blocks: Seq[Block] = Seq.empty,
+      idempotencyKey: Option[IdempotencyKey] = None,
+  ): F[MessageId]
+  def update(messageId: MessageId, text: String, buttons: Seq[Button] = Seq.empty, blocks: Seq[Block] = Seq.empty): F[MessageId]
   def delete(messageId: MessageId): F[Unit]
   def addReaction(messageId: MessageId, emoji: String): F[Unit]
   def removeReaction(messageId: MessageId, emoji: String): F[Unit]
