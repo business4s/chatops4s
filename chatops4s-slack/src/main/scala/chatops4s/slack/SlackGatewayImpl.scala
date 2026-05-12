@@ -1,6 +1,6 @@
 package chatops4s.slack
 
-import chatops4s.slack.api.{ChannelId, NonEmptyString, ResponseType, SlackAppToken, SlackBotToken, TriggerId, UserId, users}
+import chatops4s.slack.api.{ChannelId, NonEmptyString, ResponseType, SlackAppToken, SlackBotToken, TriggerId, UserId, chat, users}
 import chatops4s.slack.api.socket.*
 import chatops4s.slack.api.blocks.*
 import chatops4s.slack.api.manifest.SlackAppManifest
@@ -194,8 +194,9 @@ private[slack] class SlackGatewayImpl[F[_]](
       buttons: Seq[Button],
       blocks: Seq[Block],
       idempotencyKey: Option[IdempotencyKey],
+      modifyRequest: chat.PostMessageRequest => chat.PostMessageRequest,
   ): F[MessageId] =
-    withClient(client => doSend(client, channel, threadTs = None, text, buttons, blocks, idempotencyKey))
+    withClient(client => doSend(client, channel, threadTs = None, text, buttons, blocks, idempotencyKey, modifyRequest))
 
   override def reply(
       to: MessageId,
@@ -203,8 +204,9 @@ private[slack] class SlackGatewayImpl[F[_]](
       buttons: Seq[Button],
       blocks: Seq[Block],
       idempotencyKey: Option[IdempotencyKey],
+      modifyRequest: chat.PostMessageRequest => chat.PostMessageRequest,
   ): F[MessageId] =
-    withClient(client => doSend(client, to.channel.value, threadTs = Some(to.ts), text, buttons, blocks, idempotencyKey))
+    withClient(client => doSend(client, to.channel.value, threadTs = Some(to.ts), text, buttons, blocks, idempotencyKey, modifyRequest))
 
   private def doSend(
       client: SlackClient[F],
@@ -214,17 +216,18 @@ private[slack] class SlackGatewayImpl[F[_]](
       buttons: Seq[Button],
       extraBlocks: Seq[Block],
       idempotencyKey: Option[IdempotencyKey],
+      modifyRequest: chat.PostMessageRequest => chat.PostMessageRequest,
   ): F[MessageId] = {
     val blocks = buildBlocks(text, buttons, extraBlocks)
     idempotencyKey match {
-      case None      => client.postMessage(channel, text, blocks, threadTs)
+      case None      => client.postMessage(channel, text, blocks, threadTs, modifyRequest = modifyRequest)
       case Some(key) =>
         idempotencyRef.get.flatMap { check =>
           check.findExisting(client, channel, threadTs, key).flatMap {
             case Some(found) => monad.unit(found)
             case None        =>
               val metadata = Some(IdempotencyCheck.buildMetadataJson(key))
-              client.postMessage(channel, text, blocks, threadTs, metadata = metadata).flatMap { msgId =>
+              client.postMessage(channel, text, blocks, threadTs, metadata = metadata, modifyRequest = modifyRequest).flatMap { msgId =>
                 check.recordSent(key, msgId).map(_ => msgId)
               }
           }

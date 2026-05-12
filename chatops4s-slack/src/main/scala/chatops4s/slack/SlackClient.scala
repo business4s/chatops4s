@@ -35,13 +35,16 @@ class SlackClient[F[_]](token: SlackBotToken, backend: Backend[F]) {
       blocks: Option[List[Block]],
       threadTs: Option[Timestamp],
       metadata: Option[Json] = None,
+      modifyRequest: chat.PostMessageRequest => chat.PostMessageRequest = identity,
   ): F[MessageId] = {
-    val request = chat.PostMessageRequest(
-      channel = channel,
-      text = text,
-      blocks = blocks,
-      thread_ts = threadTs,
-      metadata = metadata,
+    val request = modifyRequest(
+      chat.PostMessageRequest(
+        channel = channel,
+        text = text,
+        blocks = blocks,
+        thread_ts = threadTs,
+        metadata = metadata,
+      ),
     )
 
     api.chat.postMessage(request).map { resp =>
