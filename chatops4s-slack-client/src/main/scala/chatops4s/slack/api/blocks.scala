@@ -766,7 +766,21 @@ object blocks {
       rows: List[List[TableCell]],
       block_id: Option[String] = None,
       column_settings: Option[List[TableColumnSetting]] = None,
-  ) extends Block derives Codec.AsObject
+  ) extends Block derives Codec.AsObject {
+    require(rows.size <= TableBlock.MaxRows, s"Slack table supports at most ${TableBlock.MaxRows} rows, got ${rows.size}")
+    rows.zipWithIndex.foreach { case (row, i) =>
+      require(row.size <= TableBlock.MaxColumns, s"Slack table supports at most ${TableBlock.MaxColumns} cells per row, row $i has ${row.size}")
+    }
+    column_settings.foreach { cs =>
+      val maxRowSize = rows.map(_.size).maxOption.getOrElse(0)
+      require(cs.size <= maxRowSize, s"column_settings size (${cs.size}) must not exceed the widest row size ($maxRowSize)")
+    }
+  }
+
+  object TableBlock {
+    val MaxRows: Int    = 100
+    val MaxColumns: Int = 20
+  }
 
   case class UnknownBlock(raw: Json) extends Block
 

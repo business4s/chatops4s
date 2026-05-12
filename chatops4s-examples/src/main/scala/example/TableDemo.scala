@@ -1,7 +1,8 @@
 package example
 
 import cats.effect.{ExitCode, IO, IOApp}
-import chatops4s.slack.api.{SlackApi, SlackBotToken, chat}
+import chatops4s.slack.SlackGateway
+import chatops4s.slack.api.SlackBotToken
 import chatops4s.slack.api.blocks.{
   HeaderBlock,
   PlainTextObject,
@@ -26,8 +27,6 @@ object TableDemo extends IOApp {
 
   override def run(args: List[String]): IO[ExitCode] =
     HttpClientFs2Backend.resource[IO]().use { backend =>
-      val api = new SlackApi[IO](backend, token)
-
       val table = TableBlock(
         block_id = Some("deployments_table"),
         column_settings = Some(
@@ -90,18 +89,11 @@ object TableDemo extends IOApp {
         table,
       )
 
-      val req = chat.PostMessageRequest(
-        channel = channel,
-        text = "Deployment Status (table preview)",
-        blocks = Some(blocks),
-      )
-
-      api.chat
-        .postMessage(req)
-        .flatMap { resp =>
-          val r = resp.okOrThrow
-          IO.println(s"Posted table to ${r.channel.value} ts=${r.ts.value}")
-        }
-        .as(ExitCode.Success)
+      for {
+        slack <- SlackGateway.create(backend)
+        _     <- slack.start(token, None)
+        msg   <- slack.send(channel, "Deployment Status (table preview)", blocks = blocks)
+        _     <- IO.println(s"Posted table to ${msg.channel.value} ts=${msg.ts.value}")
+      } yield ExitCode.Success
     }
 }
