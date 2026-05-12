@@ -37,6 +37,16 @@ object blocks {
     given Decoder[ViewType] = Decoder[String].emap(s => mapping.get(s).toRight(s"Unknown view type: $s"))
   }
 
+  enum TableCellAlign   {
+    case Left, Center, Right
+  }
+  object TableCellAlign {
+    private val mapping           = Map("left" -> Left, "center" -> Center, "right" -> Right)
+    private val reverse           = mapping.map(_.swap)
+    given Encoder[TableCellAlign] = Encoder[String].contramap(reverse)
+    given Decoder[TableCellAlign] = Decoder[String].emap(s => mapping.get(s).toRight(s"Unknown cell alignment: $s"))
+  }
+
   // --- TypeEntry helper ---
 
   private class TypeEntry[A](
@@ -724,6 +734,40 @@ object blocks {
       block_id: Option[String] = None,
   ) extends Block derives Codec.AsObject
 
+  // --- Table cell types ---
+  // https://docs.slack.dev/reference/block-kit/blocks/table-block
+  // A cell is either a `raw_text` (plain string) or a `rich_text` (same shape as RichTextBlock).
+
+  type TableCell = String | RichTextBlock
+
+  given Encoder[TableCell] = Encoder.instance {
+    case s: String        => Json.obj("type" -> Json.fromString("raw_text"), "text" -> Json.fromString(s))
+    case r: RichTextBlock => Encoder[Block].apply(r)
+  }
+
+  given Decoder[TableCell] = Decoder.instance { cursor =>
+    cursor.get[String]("type").flatMap {
+      case "raw_text" => cursor.get[String]("text").map(s => s: TableCell)
+      case _          =>
+        Decoder[Block].apply(cursor).flatMap {
+          case r: RichTextBlock => Right(r: TableCell)
+          case other            => Left(DecodingFailure(s"Unsupported table cell block type: ${other.getClass.getSimpleName}", cursor.history))
+        }
+    }
+  }
+
+  case class TableColumnSetting(
+      align: Option[TableCellAlign] = None,
+      is_wrapped: Option[Boolean] = None,
+  ) derives Codec.AsObject
+
+  // https://docs.slack.dev/reference/block-kit/blocks/table-block
+  case class TableBlock(
+      rows: List[List[TableCell]],
+      block_id: Option[String] = None,
+      column_settings: Option[List[TableColumnSetting]] = None,
+  ) extends Block derives Codec.AsObject
+
   case class UnknownBlock(raw: Json) extends Block
 
   // --- Block codecs (TypeEntry-based) ---
@@ -739,6 +783,7 @@ object blocks {
     TypeEntry[RichTextBlock]("rich_text"),
     TypeEntry[FileBlock]("file"),
     TypeEntry[VideoBlock]("video"),
+    TypeEntry[TableBlock]("table"),
   )
 
   private val blockTypeMap: Map[String, Decoder[Block]] =

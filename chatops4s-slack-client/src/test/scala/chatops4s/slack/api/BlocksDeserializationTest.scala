@@ -463,6 +463,86 @@ class BlocksDeserializationTest extends AnyFreeSpec with Matchers {
       json.hcursor.get[String]("provider_name").toOption shouldBe Some("YouTube")
     }
 
+    "TableBlock with mixed raw_text and rich_text cells" in {
+      val json    = encodeBlock(
+        TableBlock(
+          block_id = Some("table_123"),
+          column_settings = Some(
+            List(
+              TableColumnSetting(is_wrapped = Some(true)),
+              TableColumnSetting(align = Some(TableCellAlign.Right)),
+            ),
+          ),
+          rows = List(
+            List("Header A", "Header B"),
+            List(
+              "Data 1A",
+              RichTextBlock(
+                elements = List(
+                  RichTextSection(elements = List(RichTextLink(url = "https://slack.com", text = Some("Link")))),
+                ),
+              ),
+            ),
+          ),
+        ),
+      )
+      json.hcursor.get[String]("type").toOption shouldBe Some("table")
+      json.hcursor.get[String]("block_id").toOption shouldBe Some("table_123")
+      val cols    = json.hcursor.downField("column_settings").as[List[Json]].toOption.get
+      cols should have size 2
+      cols.head.hcursor.get[Boolean]("is_wrapped").toOption shouldBe Some(true)
+      cols(1).hcursor.get[String]("align").toOption shouldBe Some("right")
+      val rows    = json.hcursor.downField("rows").as[List[List[Json]]].toOption.get
+      rows should have size 2
+      rows.head.head.hcursor.get[String]("type").toOption shouldBe Some("raw_text")
+      rows.head.head.hcursor.get[String]("text").toOption shouldBe Some("Header A")
+      val rich    = rows(1)(1).hcursor
+      rich.get[String]("type").toOption shouldBe Some("rich_text")
+      val rtElems = rich.downField("elements").as[List[Json]].toOption.get
+      rtElems.head.hcursor.get[String]("type").toOption shouldBe Some("rich_text_section")
+    }
+
+    "TableBlock decodes a literal JSON payload from Slack docs" in {
+      val rawJson = """{
+                      |  "type": "table",
+                      |  "block_id": "table_123",
+                      |  "column_settings": [
+                      |    { "is_wrapped": true },
+                      |    { "align": "right" }
+                      |  ],
+                      |  "rows": [
+                      |    [
+                      |      { "type": "raw_text", "text": "Header A" },
+                      |      { "type": "raw_text", "text": "Header B" }
+                      |    ],
+                      |    [
+                      |      { "type": "raw_text", "text": "Data 1A" },
+                      |      {
+                      |        "type": "rich_text",
+                      |        "elements": [
+                      |          {
+                      |            "type": "rich_text_section",
+                      |            "elements": [
+                      |              { "type": "link", "text": "Link", "url": "https://slack.com" }
+                      |            ]
+                      |          }
+                      |        ]
+                      |      }
+                      |    ]
+                      |  ]
+                      |}""".stripMargin
+      parseOk[Block](rawJson) { block =>
+        val table = block.asInstanceOf[TableBlock]
+        table.block_id shouldBe Some("table_123")
+        table.column_settings.get should have size 2
+        table.column_settings.get(1).align shouldBe Some(TableCellAlign.Right)
+        table.rows should have size 2
+        table.rows.head.head shouldBe "Header A"
+        val cell  = table.rows(1)(1).asInstanceOf[RichTextBlock]
+        cell.elements.head shouldBe a[RichTextSection]
+      }
+    }
+
     "None fields are encoded as null" in {
       val json = encodeBlock(SectionBlock(text = Some(PlainTextObject("x"))))
       json.hcursor.get[Option[String]]("block_id").toOption shouldBe Some(None)
@@ -972,6 +1052,7 @@ class BlocksDeserializationTest extends AnyFreeSpec with Matchers {
         RichTextBlock(elements = Nil)                                                                   -> "rich_text",
         FileBlock(external_id = "x")                                                                    -> "file",
         VideoBlock("x", "https://example.com/v.mp4", "https://example.com/t.jpg", PlainTextObject("x")) -> "video",
+        TableBlock(rows = List(List("x")))                                                              -> "table",
       )
 
       blocks.foreach { (block, expectedType) =>
