@@ -1,6 +1,6 @@
 package chatops4s.slack
 
-import chatops4s.slack.api.{TriggerId, UserId, users}
+import chatops4s.slack.api.{TriggerId, UserId, chat, users}
 import chatops4s.slack.api.blocks.Block
 import sttp.client4.WebSocketBackend
 import sttp.monad.syntax.*
@@ -12,6 +12,7 @@ trait SlackGateway[F[_]] {
       buttons: Seq[Button] = Seq.empty,
       blocks: Seq[Block] = Seq.empty,
       idempotencyKey: Option[IdempotencyKey] = None,
+      modifyRequest: chat.PostMessageRequest => chat.PostMessageRequest = identity,
   ): F[MessageId]
   def reply(
       to: MessageId,
@@ -19,6 +20,7 @@ trait SlackGateway[F[_]] {
       buttons: Seq[Button] = Seq.empty,
       blocks: Seq[Block] = Seq.empty,
       idempotencyKey: Option[IdempotencyKey] = None,
+      modifyRequest: chat.PostMessageRequest => chat.PostMessageRequest = identity,
   ): F[MessageId]
   def update(messageId: MessageId, text: String, buttons: Seq[Button] = Seq.empty, blocks: Seq[Block] = Seq.empty): F[MessageId]
   def delete(messageId: MessageId): F[Unit]
