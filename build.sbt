@@ -27,7 +27,7 @@ lazy val `chatops4s-slack` = (project in file("chatops4s-slack"))
   .settings(commonSettings)
   .settings(
     libraryDependencies ++= Seq(
-      "org.slf4j"                      % "slf4j-api"   % "2.0.17",
+      "org.slf4j"                      % "slf4j-api"   % "2.0.18",
       "org.typelevel"                 %% "cats-effect" % "3.7.0"  % Test,
       "com.softwaremill.sttp.client4" %% "cats"        % "4.0.23" % Test,
     ),
