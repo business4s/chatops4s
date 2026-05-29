@@ -18,7 +18,7 @@ lazy val `chatops4s-slack-client` = (project in file("chatops4s-slack-client"))
       "io.circe"                      %% "circe-core"    % "0.14.15",
       "io.circe"                      %% "circe-generic" % "0.14.15",
       "io.circe"                      %% "circe-parser"  % "0.14.15",
-      "com.softwaremill.sttp.client4" %% "core"          % "4.0.23",
+      "com.softwaremill.sttp.client4" %% "core"          % "4.0.24",
       "com.softwaremill.sttp.client4" %% "circe"         % "4.0.24",
     ),
   )
