@@ -44,7 +44,7 @@ private object AppManagementPage {
       store      <- ConfigTokenStore.inMemory[IO](initial)
       refreshing <- RefreshingSlackConfigApi.create[IO](backend, store)
       // Use withApi to get a SlackConfigApi with a fresh token:
-      resp       <- refreshing.withApi { api =>
+      _          <- refreshing.withApi { api =>
                       api.apps.manifest.create(
                         apps.manifest.CreateRequest(
                           manifest = SlackAppManifest(
