@@ -4,8 +4,11 @@ import cats.effect.IO
 import chatops4s.slack.{ButtonId, IdempotencyCheck, IdempotencyKey, MessageId, SlackGateway, SlackSetup, UserInfoCache}
 import chatops4s.slack.api.UserId
 import sttp.client4.WebSocketBackend
-import java.time.Duration
 
+import java.time.Duration
+import scala.annotation.nowarn
+
+@nowarn("msg=unused")
 private object BasicOps {
 
   def messaging(slack: SlackGateway[IO], channel: String): IO[Unit] =
