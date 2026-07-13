@@ -32,6 +32,11 @@ lazy val `chatops4s-slack` = (project in file("chatops4s-slack"))
       "com.softwaremill.sttp.client4" %% "cats"        % "4.0.25" % Test,
     ),
     Test / parallelExecution := false,
+    // Snapshot tests need the real src/test/resources dir (not the classpath copy) to rewrite snapshots.
+    Test / testOptions += {
+      val resources = (Test / resourceDirectory).value.getAbsolutePath
+      Tests.Setup(() => sys.props("chatops4s.test.resources") = resources)
+    },
   )
   .dependsOn(`chatops4s-slack-client`)
 

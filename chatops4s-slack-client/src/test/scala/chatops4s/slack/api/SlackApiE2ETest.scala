@@ -13,9 +13,10 @@ import sttp.shared.Identity
 // The bot must be a member of SLACK_CHANNEL (the setup step joins automatically).
 class SlackApiE2ETest extends AnyFreeSpec with Matchers {
 
-  private val botToken = sys.env.get("SLACK_BOT_TOKEN").map(SlackBotToken.unsafe)
-  private val appToken = sys.env.get("SLACK_APP_TOKEN").map(SlackAppToken.unsafe)
-  private val channel  = sys.env.get("SLACK_CHANNEL")
+  // CI passes these as empty strings when secrets are unavailable (e.g. fork PRs) — treat blank as absent
+  private val botToken = sys.env.get("SLACK_BOT_TOKEN").filter(_.nonEmpty).map(SlackBotToken.unsafe)
+  private val appToken = sys.env.get("SLACK_APP_TOKEN").filter(_.nonEmpty).map(SlackAppToken.unsafe)
+  private val channel  = sys.env.get("SLACK_CHANNEL").filter(_.nonEmpty)
 
   override def withFixture(test: NoArgTest): Outcome =
     if (botToken.isEmpty || channel.isEmpty)
