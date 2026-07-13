@@ -19,9 +19,10 @@ jobs:
       - name: Build and Test
         run: sbt test
         env:
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          SLACK_APP_TOKEN: ${{ secrets.SLACK_APP_TOKEN }}
-          SLACK_CHANNEL: "#e2e-test"
+          # E2E tests self-cancel when these are blank; skip them on PRs (fork PRs get no secrets anyway)
+          SLACK_BOT_TOKEN: ${{ github.event_name != 'pull_request' && secrets.SLACK_BOT_TOKEN || '' }}
+          SLACK_APP_TOKEN: ${{ github.event_name != 'pull_request' && secrets.SLACK_APP_TOKEN || '' }}
+          SLACK_CHANNEL: ${{ github.event_name != 'pull_request' && '#e2e-test' || '' }}
       - name: scalafmt check
         run: sbt scalafmtCheckAll
       - name: Check for uncommitted changes

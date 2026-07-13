@@ -15,9 +15,9 @@ lazy val `chatops4s-slack-client` = (project in file("chatops4s-slack-client"))
   .settings(commonSettings)
   .settings(
     libraryDependencies ++= Seq(
-      "io.circe"                      %% "circe-core"    % "0.14.15",
-      "io.circe"                      %% "circe-generic" % "0.14.15",
-      "io.circe"                      %% "circe-parser"  % "0.14.15",
+      "io.circe"                      %% "circe-core"    % "0.14.16",
+      "io.circe"                      %% "circe-generic" % "0.14.16",
+      "io.circe"                      %% "circe-parser"  % "0.14.16",
       "com.softwaremill.sttp.client4" %% "core"          % "4.0.25",
       "com.softwaremill.sttp.client4" %% "circe"         % "4.0.25",
     ),
@@ -32,6 +32,11 @@ lazy val `chatops4s-slack` = (project in file("chatops4s-slack"))
       "com.softwaremill.sttp.client4" %% "cats"        % "4.0.25" % Test,
     ),
     Test / parallelExecution := false,
+    // Snapshot tests need the real src/test/resources dir (not the classpath copy) to rewrite snapshots.
+    Test / testOptions += {
+      val resources = (Test / resourceDirectory).value.getAbsolutePath
+      Tests.Setup(() => sys.props("chatops4s.test.resources") = resources)
+    },
   )
   .dependsOn(`chatops4s-slack-client`)
 
@@ -41,7 +46,7 @@ lazy val `chatops4s-examples` = (project in file("chatops4s-examples"))
     libraryDependencies ++= Seq(
       "org.typelevel"                 %% "cats-effect"     % "3.7.0",
       "com.softwaremill.sttp.client4" %% "fs2"             % "4.0.25",
-      "ch.qos.logback"                 % "logback-classic" % "1.5.34",
+      "ch.qos.logback"                 % "logback-classic" % "1.5.37",
     ),
     Test / parallelExecution := false,
     publish / skip           := true,

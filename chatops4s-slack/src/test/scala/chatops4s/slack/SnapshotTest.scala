@@ -2,16 +2,20 @@ package chatops4s.slack
 
 import org.scalatest.Assertions
 
-import java.nio.file.{Files, Paths}
+import java.nio.file.{Files, Path, Paths}
 
 object SnapshotTest {
 
-  private val testResourcesPath = Paths
-    .get(getClass.getResource("/").toURI)
-    .getParent // target/scala-x.y.z
-    .getParent // target
-    .getParent // chatops4s-slack
-    .resolve("src/test/resources")
+  // Set by Tests.Setup in build.sbt; the fallback covers IDE test runs launched from the repo root.
+  private val testResourcesPath: Path = {
+    val fromProp = sys.props.get("chatops4s.test.resources").map(Paths.get(_))
+    val fallback = Paths.get("chatops4s-slack", "src", "test", "resources")
+    fromProp
+      .orElse(Option.when(Files.isDirectory(fallback))(fallback))
+      .getOrElse(
+        sys.error("Cannot locate test resources: run tests through sbt or from the repo root (chatops4s.test.resources property not set)"),
+      )
+  }
 
   def testSnapshot(content: String, path: String): Unit = {
     val filePath    = testResourcesPath.resolve(path)
