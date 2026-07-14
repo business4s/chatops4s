@@ -29,7 +29,7 @@ lazy val `chatops4s-slack` = (project in file("chatops4s-slack"))
     libraryDependencies ++= Seq(
       "org.slf4j"                      % "slf4j-api"   % "2.0.18",
       "org.typelevel"                 %% "cats-effect" % "3.7.0"  % Test,
-      "com.softwaremill.sttp.client4" %% "cats"        % "4.0.25" % Test,
+      "com.softwaremill.sttp.client4" %% "cats"        % "4.0.26" % Test,
     ),
     Test / parallelExecution := false,
     // Snapshot tests need the real src/test/resources dir (not the classpath copy) to rewrite snapshots.
